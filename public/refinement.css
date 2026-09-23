@@ -1,0 +1,31 @@
+/* Quiet surfaces, midnight accents and short, purposeful motion. */
+:root{background:#f0f1f4;color:#232638;--line:#e6e8ee;--muted:#747888;--radius:14px}
+body{padding:16px}
+.app-frame{border:1px solid #e0e3eb;border-radius:20px;background:#fafbfc;box-shadow:0 12px 40px #161c3006;min-height:calc(100vh - 32px)}
+.sidebar{border-radius:19px 0 0 19px;background:#191970;min-height:calc(100vh - 34px)}
+[dir=rtl] .sidebar{border-radius:0 19px 19px 0}
+.nav-item{border-radius:8px}.nav-item.active{box-shadow:inset 3px 0 #c7ccff;background:#ffffff12}
+[dir=rtl] .nav-item.active{box-shadow:inset -3px 0 #c7ccff}
+.topbar{height:72px}.top-label{color:#787d8d}.page-heading h1{font-weight:700;letter-spacing:-.4px}
+.summary-main{background:#191970;border-radius:14px;box-shadow:none}.summary-main:after{display:none}
+.summary-small,.summary-small.lavender,.summary-small.pink{background:#fff;border:1px solid var(--line);border-radius:14px}
+.summary-small .metric-icon{background:#f1f2f8;color:#555b85}.summary-small>strong{color:#262b43}
+.summary-small>span:not(.metric-icon),.summary-small>small{color:#747888}
+.panel{box-shadow:none}.btn{border-radius:8px;font-weight:600}.primary{box-shadow:none}.secondary{border-color:#dfe2ea;color:#4d526b}
+.language-btn{border-radius:8px}.tag{border-radius:5px}.initial{border-radius:12px;background:#eef0f7;color:#333b71}
+.report-metrics>div{background:#f5f6f9;border-radius:10px}.report-intro{color:#747888}
+dialog{border-radius:16px;box-shadow:0 24px 80px #151b3030}dialog::backdrop{background:#15192a66;backdrop-filter:blur(3px)}
+.location-card,.technician-card{transition:border-color .18s ease,box-shadow .18s ease}
+.location-card:hover,.technician-card:hover{border-color:#cdd2e2;box-shadow:0 5px 20px #18203e05}
+.catalog-button{transition:background .18s ease}.catalog-button>svg{transition:transform .18s ease}
+.catalog-button:hover>svg{transform:translateX(3px)}[dir=rtl] .catalog-button:hover>svg{transform:translateX(-3px)}
+@media(prefers-reduced-motion:no-preference){
+ #view-content{animation:content-in .24s ease-out both}
+ dialog[open]{animation:dialog-in .2s ease-out both}
+ dialog[open]::backdrop{animation:backdrop-in .2s ease-out both}
+ .btn,.nav-item,.row-btn{transition:background .16s ease,border-color .16s ease,transform .16s ease}
+ @keyframes content-in{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
+ @keyframes dialog-in{from{opacity:0;transform:translateY(8px) scale(.99)}to{opacity:1;transform:translateY(0) scale(1)}}
+ @keyframes backdrop-in{from{opacity:0}to{opacity:1}}
+}
+@media(max-width:700px){body{padding:0}.app-frame{border:0;border-radius:0;min-height:100vh}.sidebar,[dir=rtl] .sidebar{border-radius:0;min-height:0}.topbar{height:62px}.summary-main,.summary-small{border-radius:12px}}

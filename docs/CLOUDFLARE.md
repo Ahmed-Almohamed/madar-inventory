@@ -52,3 +52,14 @@ npx wrangler d1 export DB --remote --output=backups/remote.sql
 تحقق من الصفحات واللغة والصور والتقارير. جرّب بيانات اختبارية للتأكد من خصم المخزون وإعادته بعد إلغاء المبيع. تحقق من تقييد الوصول إلى الصفحة ومسارات /api/ معاً.
 
 الخطة المجانية تخضع لحصص حسابك: [Workers](https://developers.cloudflare.com/workers/platform/pricing/) و[D1](https://developers.cloudflare.com/d1/platform/pricing/). رفع المشروع إلى GitHub لا ينشئ D1 ولا ينشر الموقع تلقائياً.
+
+### تجهيز نسخة محلية للاستيراد
+
+بعد تصدير نسخة محلية، يمكن تجهيز ترتيب الجداول والتحقق من الاستيراد داخل SQLite مؤقتة:
+
+```sh
+node scripts/prepare-import.mjs backups/local.sql backups/import.sql
+```
+
+الأداة تنشئ كل الجداول قبل إدخال البيانات، وتُبقي triggers بعد البيانات، وتفحص العلاقات. ترفض استبدال ملف موجود. الناتج مخصص لقاعدة بعيدة فارغة فقط. لا ترفع أي ملف من backups إلى GitHub.
+
