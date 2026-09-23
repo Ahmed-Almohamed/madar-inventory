@@ -37,7 +37,7 @@ npm run deploy
 
 ```sh
 mkdir backups
-npx wrangler d1 export DB --local --output=backups/local.sql
+npx wrangler d1 export DB --local --config wrangler.local.jsonc --output=backups/local.sql
 npx wrangler d1 export DB --remote --output=backups/remote.sql
 ```
 
@@ -63,3 +63,5 @@ node scripts/prepare-import.mjs backups/local.sql backups/import.sql
 
 الأداة تنشئ كل الجداول قبل إدخال البيانات، وتُبقي triggers بعد البيانات، وتفحص العلاقات. ترفض استبدال ملف موجود. الناتج مخصص لقاعدة بعيدة فارغة فقط. لا ترفع أي ملف من backups إلى GitHub.
 
+
+إعداد الإنتاج في wrangler.jsonc، وإعداد المعاينة في wrangler.local.jsonc للحفاظ على قاعدة البيانات المحلية مستقلة. أوامر dev وdb:local تستخدم ملف المعاينة تلقائياً.
