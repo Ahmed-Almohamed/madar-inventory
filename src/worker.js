@@ -9,6 +9,19 @@ function date(v){if(typeof v!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(v)||!Number
 function requestId(v){if(typeof v!=='string'||!/^[a-zA-Z0-9-]{16,80}$/.test(v))fail('invalid_request');return v;}
 async function body(req,max=16000){if(!req.headers.get('content-type')?.includes('application/json'))fail('invalid_request',415);const text=await req.text();if(text.length>max)fail('request_large',413);try{const d=JSON.parse(text);if(!d||typeof d!=='object'||Array.isArray(d))fail('invalid_request');return d;}catch{fail('invalid_request');}}
 const today=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Damascus',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+const phoneKey=column=>`replace(replace(replace(replace(replace(${column},' ',''),'-',''),'(',''),')',''),'+','')`;
+const simFee=column=>`CASE WHEN ${column}<>'' THEN 500 ELSE 0 END`;
+function saleValues(d){
+ if(!SOURCES.includes(d.source))fail('invalid_field',400,'source');
+ const phone=str(d.phone,'phone',30);if(!/^[+\d\s()-]{6,30}$/.test(phone))fail('invalid_field',400,'phone');
+ const soldOn=date(d.sold_on);if(soldOn>today())fail('future_date');
+ const tech=d.technician_id==null?null:integer(d.technician_id,'technician');
+ const fee=integer(d.installation_fee_cents??0,'installation_fee',0,100000000);if(tech===null&&fee!==0)fail('invalid_field',400,'installation_fee');
+ if(d.has_sim!==undefined&&typeof d.has_sim!=='boolean')fail('invalid_field',400,'has_sim');
+ const sim=d.has_sim?str(d.sim_code,'sim_code',80).toUpperCase():'';
+ if(sim&&!/^[A-Z0-9-]+$/.test(sim))fail('invalid_field',400,'sim_code');
+ return [integer(d.product_id,'device'),integer(d.warehouse_id,'warehouse'),integer(d.quantity,'quantity'),integer(d.price_cents,'unit_price',0,100000000),str(d.customer||'','customer',200,false),phone,str(d.address,'address',500),d.source,str(d.notes||'','notes',1000,false),soldOn,tech,fee,integer(d.shipping_fee_cents??0,'shipping_fee',0,100000000),sim];
+}
 async function api(req,env){
  const url=new URL(req.url),path=url.pathname,method=req.method,db=env.DB;
  if(!['GET','POST'].includes(method))fail('method_not_allowed',405);
@@ -84,22 +97,35 @@ async function api(req,env){
  }
  if(path==='/api/sales'&&method==='POST'){
   const d=await body(req),id=requestId(d.request_id);const existing=await db.prepare('SELECT id FROM sales WHERE request_id=?').bind(id).first();if(existing)return json({ok:true,id:existing.id});
-  if(!SOURCES.includes(d.source))fail('invalid_field',400,'source');
-  const phone=str(d.phone,'phone',30);if(!/^[+\d\s()-]{6,30}$/.test(phone))fail('invalid_field',400,'phone');
-  const soldOn=date(d.sold_on);if(soldOn>today())fail('future_date');
-  const tech=d.technician_id==null?null:integer(d.technician_id,'technician');
-  const fee=integer(d.installation_fee_cents??0,'installation_fee',0,100000000);if(tech===null&&fee!==0)fail('invalid_field',400,'installation_fee');
-  const r=await db.prepare(`INSERT INTO sales(request_id,product_id,warehouse_id,quantity,price_cents,customer,phone,address,source,notes,sold_on,technician_id,installation_fee_cents,shipping_fee_cents) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(id,integer(d.product_id,'device'),integer(d.warehouse_id,'warehouse'),integer(d.quantity,'quantity'),integer(d.price_cents,'unit_price',0,100000000),str(d.customer||'','customer',200,false),phone,str(d.address,'address',500),d.source,str(d.notes||'','notes',1000,false),soldOn,tech,fee,integer(d.shipping_fee_cents??0,'shipping_fee',0,100000000)).run();return json({ok:true,id:r.meta.last_row_id},201);
+  const r=await db.prepare('INSERT INTO sales(request_id,product_id,warehouse_id,quantity,price_cents,customer,phone,address,source,notes,sold_on,technician_id,installation_fee_cents,shipping_fee_cents,sim_code) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').bind(id,...saleValues(d)).run();return json({ok:true,id:r.meta.last_row_id},201);
+ }
+ if(/^\/api\/sales\/\d+\/edit$/.test(path)&&method==='POST'){
+  const id=Number(path.split('/')[3]),d=await body(req),values=saleValues(d),revision=integer(d.revision,'revision');
+  const result=await db.prepare('UPDATE sales SET product_id=?,warehouse_id=?,quantity=?,price_cents=?,customer=?,phone=?,address=?,source=?,notes=?,sold_on=?,technician_id=?,installation_fee_cents=?,shipping_fee_cents=?,sim_code=?,revision=revision+1 WHERE id=? AND revision=?').bind(...values,id,revision).run();
+  if(!result.meta.changes){if(!await db.prepare('SELECT id FROM sales WHERE id=?').bind(id).first())fail('not_found',404);fail('sale_changed',409);}
+  return json({ok:true,id});
+ }
+ if(path==='/api/customers'&&method==='GET'){
+  const page=Math.max(1,Math.floor(Number(url.searchParams.get('page'))||1)),q=(url.searchParams.get('q')||'').slice(0,100);
+  const cte=`WITH history AS (SELECT s.*,${phoneKey('s.phone')} customer_key FROM sales s), ranked AS (SELECT *,ROW_NUMBER() OVER(PARTITION BY customer_key ORDER BY sold_on DESC,id DESC) rn FROM history), totals AS (SELECT customer_key,COUNT(*) records,SUM(CASE WHEN cancelled_at IS NULL THEN quantity ELSE 0 END) units,SUM(CASE WHEN cancelled_at IS NULL THEN quantity*price_cents+installation_fee_cents+shipping_fee_cents+${simFee('sim_code')} ELSE 0 END) total_cents FROM history GROUP BY customer_key)`;
+  const from=` FROM ranked r JOIN totals t ON t.customer_key=r.customer_key WHERE r.rn=1 AND (?='' OR r.customer_key IN (SELECT customer_key FROM history WHERE instr(lower(customer),lower(?))>0 OR instr(phone,?)>0 OR instr(customer_key,?)>0 OR instr(lower(address),lower(?))>0 OR instr(lower(sim_code),lower(?))>0))`;
+  const exact=url.searchParams.get('customer_phone');
+  const args=[q,q,q,q.replace(/[+\s()-]/g,''),q,q];
+  const exactWhere=exact===null?'':' AND r.customer_key=?';if(exact!==null)args.push(exact.replace(/[+\s()-]/g,''));
+  const result=await db.batch([db.prepare(cte+' SELECT r.customer_key,r.customer,r.phone,r.address,r.sold_on,t.records,t.units,t.total_cents'+from+exactWhere+' ORDER BY r.sold_on DESC,r.id DESC LIMIT 25 OFFSET ?').bind(...args,(page-1)*25),db.prepare(cte+' SELECT COUNT(*) total'+from+exactWhere).bind(...args)]);
+  return json({items:result[0].results,total:result[1].results[0].total,page});
  }
  if(/^\/api\/sales\/\d+\/cancel$/.test(path)&&method==='POST'){
-  const r=await db.prepare(`UPDATE sales SET cancelled_at=datetime('now') WHERE id=? AND cancelled_at IS NULL`).bind(Number(path.split('/')[3])).run();if(!r.meta.changes)fail('already_cancelled',409);return json({ok:true});
+  const r=await db.prepare(`UPDATE sales SET cancelled_at=datetime('now'),revision=revision+1 WHERE id=? AND cancelled_at IS NULL`).bind(Number(path.split('/')[3])).run();if(!r.meta.changes)fail('already_cancelled',409);return json({ok:true});
  }
  if(path==='/api/sales'&&method==='GET'){
   const page=Math.floor(Math.max(1,Math.min(100000,Number(url.searchParams.get('page'))||1)));
   const q=(url.searchParams.get('q')||'').slice(0,100),source=url.searchParams.get('source')||'';
   const from=url.searchParams.get('from')||'0001-01-01',to=url.searchParams.get('to')||'9999-12-31';date(from);date(to);
-  let where=` WHERE s.sold_on BETWEEN ? AND ? AND (?='' OR s.source=?) AND (?='' OR instr(lower(s.customer),lower(?))>0 OR instr(s.phone,?)>0 OR instr(lower(p.name),lower(?))>0 OR instr(lower(t.name),lower(?))>0)`;
-  const args=[from,to,source,source,q,...Array(4).fill(q)];
+  let where=` WHERE s.sold_on BETWEEN ? AND ? AND (?='' OR s.source=?) AND (?='' OR instr(lower(s.customer),lower(?))>0 OR instr(s.phone,?)>0 OR instr(lower(p.name),lower(?))>0 OR instr(lower(t.name),lower(?))>0 OR instr(lower(s.sim_code),lower(?))>0)`;
+  const args=[from,to,source,source,q,...Array(5).fill(q)];
+  const customerPhone=url.searchParams.get('customer_phone');
+  if(customerPhone!==null){where+=' AND '+phoneKey('s.phone')+'=?';args.push(customerPhone.replace(/[+\s()-]/g,''));}
   const productFilter=url.searchParams.get('product_id');
   if(productFilter!==null){where+=' AND s.product_id=?';args.push(integer(Number(productFilter),'device'));}
   const techFilter=url.searchParams.get('technician_id')||'',province=url.searchParams.get('governorate')||'';
@@ -117,7 +143,7 @@ async function api(req,env){
    else{where+=' AND (s.technician_id=? OR '+linked+')';args.push(technician,technician);}
   }
   const base=' FROM sales s JOIN products p ON p.id=s.product_id JOIN warehouses w ON w.id=s.warehouse_id LEFT JOIN technicians t ON t.id=s.technician_id';
-  const queries=[db.prepare('SELECT s.*,p.name product,w.name warehouse,w.governorate,t.name technician'+base+where+' ORDER BY s.sold_on DESC,s.id DESC LIMIT 25 OFFSET ?').bind(...args,(page-1)*25),db.prepare('SELECT COUNT(*) total'+base+where).bind(...args)];
+  const queries=[db.prepare('SELECT s.*,'+simFee('s.sim_code')+' sim_fee_cents,p.name product,w.name warehouse,w.governorate,t.name technician'+base+where+' ORDER BY s.sold_on DESC,s.id DESC LIMIT 25 OFFSET ?').bind(...args,(page-1)*25),db.prepare('SELECT COUNT(*) total'+base+where).bind(...args)];
   if(technician!==null)queries.push(db.prepare(`SELECT COUNT(*) count,COALESCE(SUM(s.quantity),0) units,COALESCE(SUM(s.quantity*s.price_cents),0) revenue,COALESCE(SUM(CASE WHEN s.technician_id=? THEN s.installation_fee_cents ELSE 0 END),0) fees`+base+where+' AND s.cancelled_at IS NULL').bind(technician,...args));
   const r=await db.batch(queries);
   return json({items:r[0].results,total:r[1].results[0].total,page,...(technician!==null?{summary:r[2].results[0]}:{})});
@@ -129,6 +155,7 @@ export default{async fetch(req,env){
  try{response=new URL(req.url).pathname.startsWith('/api/')?await api(req,env):await env.ASSETS.fetch(req);}
  catch(e){let code=e.message,status=e.status||500;
   if(code.includes('INSUFFICIENT_STOCK')){code='insufficient_stock';status=409;}
+  else if(code.includes('sales.sim_code')){code='sim_duplicate';status=409;}
   else if(code.includes('UNIQUE constraint')){code='duplicate';status=409;}
   else if(code.includes('FOREIGN KEY')){code='missing_record';status=400;}
   else if(!e.status){console.error(e);code='server_error';}

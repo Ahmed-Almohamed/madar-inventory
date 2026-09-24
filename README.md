@@ -7,6 +7,9 @@
 ## المميزات
 
 - تسجيل المبيع من قائمة الأجهزة، مع الكمية والسعر والعميل والهاتف والعنوان ومصدر العميل.
+- قسم العملاء مع البحث بالاسم والهاتف والعنوان وكود الشريحة، وملف لكل عميل يعرض مشترياته وتفاصيلها.
+- شريحة اختيارية واحدة لكل مبيع بسعر ثابت 5 دولارات، مع كود قابل للبحث ومنع تكراره في المبيعات الفعالة.
+- تعديل تفاصيل أي مبيع، مع تصحيح المخزون تلقائياً عند تغيير الجهاز أو المخزن أو الكمية ومنع التعارض بين التعديلات المتزامنة.
 - اختيار فني أو تركيب العميل بنفسه؛ أجور التركيب والشحن اختيارية ومنفصلة عن قيمة الأجهزة.
 - تصفية حسب الفني، محافظة المخزن، مصدر العميل، التاريخ والبحث النصي.
 - إدارة المخازن والمحافظات وكميات الأجهزة والفنيين المرتبطين بها.
@@ -37,6 +40,10 @@ npm run dev
 تقرير الفني يعتمد على روابط المخازن الحالية، ولا يثبت أن الفني هو البائع في المخزن المشترك. المحافظة في التصفية هي محافظة المخزن. أجرة التركيب والشحن لكل المبيع وليستا لكل قطعة. الصور اختيارية: JPG/PNG/WebP حتى 10 MB، تُحفظ JPEG مضغوطة حتى 200 KB. أسماء المستخدمين للمنتجات والعملاء لا تُترجم تلقائياً.
 
 ## الأوامر
+
+تُجمع مشتريات العميل تلقائياً حسب رقم هاتفه بعد تجاهل المسافات والشرطات والأقواس وعلامة `+`؛ استخدم صيغة موحّدة لمفتاح البلد. تظهر معلومات أحدث مبيع في بطاقة العميل. إجمالي مشترياته يشمل الأجهزة والتركيب والشحن والشريحة ويستثني المبيعات الملغاة. تعديل سجل ملغى لا يعيد تفعيله ولا يغيّر المخزون.
+
+لتحديث نسخة موجودة، طبّق الترحيل `0006_customers_sim_sale_edits.sql` عبر `npm run db:remote` قبل `npm run deploy`. يحتفظ الترحيل بالمبيعات السابقة دون شريحة. خذ نسخة احتياطية قبل تحديث قاعدة الإنتاج.
 
 | الأمر | الوظيفة |
 | --- | --- |
@@ -76,5 +83,7 @@ wrangler.jsonc          إعداد Worker وربط DB
 ## English overview
 
 Madar is a bilingual Arabic/English tracker-device inventory and sales app running on Cloudflare Workers and D1. It includes warehouses, technician reports, device stock and sales history, product photos, self-installation, and optional installation/shipping fees.
+
+Customers are grouped by phone number with searchable purchase histories. Sales support one optional $5 SIM with a searchable unique active code. Existing sales can be edited with atomic inventory reconciliation and optimistic concurrency checks; cancelled records remain cancelled.
 
 Use Node.js 24. Run `npm ci`, `npm run db:local`, then `npm run dev`. Run `npm run check` and `npm run build` before deploying. No customer records or local databases belong in the repository. The app has **no authentication**; public deployment exposes its data and write operations to visitors.
