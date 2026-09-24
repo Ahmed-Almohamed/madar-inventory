@@ -96,6 +96,32 @@ async function api(req,env){
   }else await db.prepare('INSERT INTO technicians(name,phone,warehouse_id,request_id) VALUES(?,?,?,?)').bind(name,phone,warehouse,id).run();
   return json({ok:true},201);
  }
+ if(/^\/api\/(warehouses|technicians)\/\d+\/edit$/.test(path)&&method==='POST'){
+  const type=path.split('/')[2],id=Number(path.split('/')[3]),d=await body(req),warehouse=type==='warehouses';
+  if(!await db.prepare(`SELECT id FROM ${type} WHERE id=?`).bind(id).first())fail('not_found',404);
+  const name=str(d.name,warehouse?'warehouse_name':'technician_name');
+  const ids=warehouse?d.technician_ids:d.warehouse_ids;
+  if(!Array.isArray(ids)||ids.length>100||ids.some(x=>!Number.isInteger(x)||x<1)||new Set(ids).size!==ids.length)fail('invalid_request');
+  const statements=[];
+  if(warehouse){
+   if(!GOVERNORATES.includes(d.governorate))fail('invalid_field',400,'governorate');
+   statements.push(db.prepare('UPDATE warehouses SET name=?,address=?,governorate=? WHERE id=?').bind(name,str(d.address||'','address',300,false),d.governorate,id));
+  }else{
+   const phone=str(d.phone||'','phone',30,false);if(phone&&!/^[+\d\s()-]{6,30}$/.test(phone))fail('invalid_field',400,'phone');
+   statements.push(db.prepare('UPDATE technicians SET name=?,phone=?,warehouse_id=? WHERE id=?').bind(name,phone,ids[0]??null,id));
+  }
+  statements.push(db.prepare(`DELETE FROM warehouse_technicians WHERE ${warehouse?'warehouse_id':'technician_id'}=?`).bind(id));
+  statements.push(...ids.map(x=>db.prepare('INSERT INTO warehouse_technicians(warehouse_id,technician_id) VALUES(?,?)').bind(warehouse?id:x,warehouse?x:id)));
+  await db.batch(statements);return json({ok:true});
+ }
+ if(path==='/api/stock/edit'&&method==='POST'){
+  const d=await body(req),id=requestId(d.request_id),product=integer(d.product_id,'device'),warehouse=integer(d.warehouse_id,'warehouse'),quantity=integer(d.quantity,'quantity',0),expected=integer(d.expected_quantity,'quantity',0);
+  if(await db.prepare('SELECT id FROM movements WHERE request_id=?').bind(id).first())return json({ok:true});
+  if(!await db.prepare('SELECT id FROM products WHERE id=?').bind(product).first()||!await db.prepare('SELECT id FROM warehouses WHERE id=?').bind(warehouse).first())fail('not_found',404);
+  if(quantity===expected)return json({ok:true});
+  const r=await db.prepare(`INSERT INTO movements(product_id,warehouse_id,delta,kind,note,request_id) SELECT ?,?,?,'adjustment',?,? WHERE COALESCE((SELECT quantity FROM stock WHERE product_id=? AND warehouse_id=?),0)=?`).bind(product,warehouse,quantity-expected,str(d.note||'','notes',500,false),id,product,warehouse,expected).run();
+  if(!r.meta.changes)fail('stock_changed',409);return json({ok:true});
+ }
  if(path==='/api/stock'&&method==='POST'){
   const d=await body(req),id=requestId(d.request_id);if(await db.prepare('SELECT id FROM movements WHERE request_id=?').bind(id).first())return json({ok:true});
   await db.prepare(`INSERT INTO movements(product_id,warehouse_id,delta,kind,note,request_id) VALUES(?,?,?,'adjustment',?,?)`).bind(integer(d.product_id,'device'),integer(d.warehouse_id,'warehouse'),integer(d.quantity,'quantity'),str(d.note||'','notes',500,false),id).run();return json({ok:true},201);

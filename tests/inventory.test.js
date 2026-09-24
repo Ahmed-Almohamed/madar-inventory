@@ -116,3 +116,29 @@ test('Product edits preserve stock and sale prices; photos can be kept, replaced
  assert.equal(db.prepare('SELECT COUNT(*) n FROM product_images').get().n,0);
  assert.equal((await req('products/999/edit',{name:'Missing',price_cents:1})).status,404);
 });
+
+test('Stock corrections set absolute quantities, reject stale writes and retry safely',async()=>{
+ const {req,seed,db}=setup();await seed();
+ const d={product_id:1,warehouse_id:1,quantity:4,expected_quantity:10,request_id:crypto.randomUUID()};
+ assert.equal((await req('stock/edit',d)).status,200);assert.equal((await req('stock/edit',d)).status,200);
+ assert.equal(db.prepare('SELECT quantity FROM stock WHERE warehouse_id=1').get().quantity,4);
+ assert.equal((await req('stock/edit',{...d,request_id:crypto.randomUUID(),quantity:9})).status,409);
+ assert.equal((await req('stock/edit',{...d,request_id:crypto.randomUUID(),expected_quantity:4,quantity:0})).status,200);
+ assert.equal(db.prepare('SELECT quantity FROM stock WHERE warehouse_id=1').get().quantity,0);
+ assert.equal((await req('stock/edit',{...d,request_id:crypto.randomUUID(),warehouse_id:2,expected_quantity:0,quantity:5})).status,200);
+ assert.equal(db.prepare('SELECT quantity FROM stock WHERE warehouse_id=2').get().quantity,5);
+ assert.equal((await req('stock/edit',{...d,quantity:-1})).status,400);
+});
+test('Warehouse and technician edits preserve sales and atomically replace access',async()=>{
+ const {req,seed,db}=setup();await seed();await req('sales',sale());
+ assert.equal((await req('warehouses/1/edit',{name:'Office',address:'Updated',governorate:'حلب',technician_ids:[1]})).status,200);
+ assert.equal((await req('technicians/1/edit',{name:'Renamed',phone:'0998888888',warehouse_ids:[2]})).status,200);
+ assert.deepEqual((await req('overview')).body.warehouse_technicians.map(x=>[x.warehouse_id,x.technician_id]),[[2,1]]);
+ const record=(await req('sales')).body.items[0];assert.equal(record.technician,'Renamed');assert.equal(record.warehouse,'Office');assert.equal(record.quantity,3);
+ assert.equal((await req('warehouses/1/edit',{name:'Bad',address:'',governorate:'حلب',technician_ids:[999]})).status,400);
+ assert.equal(db.prepare('SELECT name FROM warehouses WHERE id=1').get().name,'Office');
+ assert.equal((await req('technicians/1/edit',{name:'Bad',phone:'',warehouse_ids:[999]})).status,400);
+ assert.equal(db.prepare('SELECT name FROM technicians WHERE id=1').get().name,'Renamed');
+ assert.equal((await req('technicians/1/edit',{name:'Renamed',phone:'',warehouse_ids:[]})).status,200);
+ assert.equal(db.prepare('SELECT COUNT(*) n FROM warehouse_technicians').get().n,0);
+});
