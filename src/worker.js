@@ -40,18 +40,23 @@ async function api(req,env){
   const row=await db.prepare('SELECT data_url FROM product_images WHERE product_id=?').bind(Number(path.split('/')[3])).first();
   if(!row)fail('not_found',404);
   const bytes=Uint8Array.from(atob(row.data_url.split(',')[1]),c=>c.charCodeAt(0));
-  return new Response(bytes,{headers:{'Content-Type':'image/jpeg','Cache-Control':'public, max-age=3600'}});
+  return new Response(bytes,{headers:{'Content-Type':'image/jpeg','Cache-Control':'no-cache'}});
  }
- if(path==='/api/products'&&method==='POST'){
+ if((path==='/api/products'||/^\/api\/products\/\d+\/edit$/.test(path))&&method==='POST'){
   const d=await body(req,300000),sku=crypto.randomUUID(),statements=[];
-  statements.push(db.prepare('INSERT INTO products(name,sku,price_cents,low_stock) VALUES(?,?,?,0)').bind(str(d.name,'device_name'),sku,integer(d.price_cents,'unit_price',0,100000000)));
+  const id=path==='/api/products'?null:Number(path.split('/')[3]);
+  if(id&&!await db.prepare('SELECT id FROM products WHERE id=?').bind(id).first())fail('not_found',404);
+  if(d.image!==undefined&&typeof d.image!=='string')fail('invalid_image');
+  const name=str(d.name,'device_name'),price=integer(d.price_cents,'unit_price',0,100000000);
+  statements.push(id?db.prepare('UPDATE products SET name=?,price_cents=? WHERE id=?').bind(name,price,id):db.prepare('INSERT INTO products(name,sku,price_cents,low_stock) VALUES(?,?,?,0)').bind(name,sku,price));
   if(d.image){
    if(typeof d.image!=='string'||d.image.length>280000||!/^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/.test(d.image))fail('invalid_image');
    let bytes;try{bytes=atob(d.image.split(',')[1]);}catch{fail('invalid_image');}
    if(bytes.length>200000||bytes.length<4||bytes.charCodeAt(0)!==255||bytes.charCodeAt(1)!==216||bytes.charCodeAt(bytes.length-2)!==255||bytes.charCodeAt(bytes.length-1)!==217)fail('invalid_image');
-   statements.push(db.prepare('INSERT INTO product_images(product_id,data_url) VALUES((SELECT id FROM products WHERE sku=?),?)').bind(sku,d.image));
+   statements.push(id?db.prepare('INSERT INTO product_images(product_id,data_url) VALUES(?,?) ON CONFLICT(product_id) DO UPDATE SET data_url=excluded.data_url').bind(id,d.image):db.prepare('INSERT INTO product_images(product_id,data_url) VALUES((SELECT id FROM products WHERE sku=?),?)').bind(sku,d.image));
   }
-  await db.batch(statements);return json({ok:true},201);
+  if(id&&d.image==='')statements.push(db.prepare('DELETE FROM product_images WHERE product_id=?').bind(id));
+  await db.batch(statements);return json({ok:true},id?200:201);
  }
  if(path==='/api/warehouses'&&method==='POST'){
   const d=await body(req),id=requestId(d.request_id);

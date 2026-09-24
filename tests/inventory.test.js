@@ -101,3 +101,18 @@ test('Invalid image uploads do not leave partial products',async()=>{const {req,
 test('Photo is stored separately and served as an image without bloating overview',async()=>{const {req,env,db}=setup();const image='data:image/jpeg;base64,/9j/2Q==';assert.equal((await req('products',{name:'Photo device',price_cents:100,image})).status,201);const p=(await req('overview')).body.products[0];assert.equal(p.has_image,1);assert.equal(p.image,undefined);const response=await worker.fetch(new Request('https://madar.test/api/products/1/image'),env);assert.equal(response.status,200);assert.equal(response.headers.get('Content-Type'),'image/jpeg');assert.equal((await response.arrayBuffer()).byteLength,4);db.close();});
 
 test('Shipping is optional, validated, preserved on retry and separate from device and installer amounts',async()=>{const {req,seed,db}=setup();await seed();const d={...sale(),shipping_fee_cents:725,technician_id:null,installation_fee_cents:0};assert.equal((await req('sales',d)).status,201);assert.equal((await req('sales',d)).status,200);let rows=(await req('sales')).body.items;assert.equal(rows[0].shipping_fee_cents,725);assert.equal(rows[0].price_cents,4550);assert.equal(rows[0].installation_fee_cents,0);for(const value of [-1,1.5,100000001,'5'])assert.equal((await req('sales',{...sale(),shipping_fee_cents:value})).status,400);assert.equal((await req('sales',sale())).status,201);rows=(await req('sales')).body.items;assert.equal(rows[0].shipping_fee_cents,0);assert.equal(db.prepare('SELECT quantity FROM stock').get().quantity,4);await req('sales/1/cancel',{});assert.equal((await req('sales')).body.items.find(x=>x.id===1).shipping_fee_cents,725);db.close();});
+
+test('Product edits preserve stock and sale prices; photos can be kept, replaced or removed atomically',async()=>{
+ const {req,seed,db}=setup();await seed();await req('sales',sale());
+ const photo='data:image/jpeg;base64,/9j/2Q==';
+ assert.equal((await req('products/1/edit',{name:'Updated',price_cents:6000,image:photo})).status,200);
+ assert.equal((await req('products/1/edit',{name:'Renamed',price_cents:7000})).status,200);
+ assert.equal(db.prepare('SELECT data_url FROM product_images WHERE product_id=1').get().data_url,photo);
+ assert.equal(db.prepare('SELECT quantity FROM stock WHERE product_id=1 AND warehouse_id=1').get().quantity,7);
+ const saved=(await req('sales')).body.items[0];assert.equal(saved.product,'Renamed');assert.equal(saved.price_cents,4550);
+ assert.equal((await req('products/1/edit',{name:'Invalid',price_cents:1,image:'broken'})).status,400);
+ assert.equal(db.prepare('SELECT name FROM products WHERE id=1').get().name,'Renamed');
+ assert.equal((await req('products/1/edit',{name:'Renamed',price_cents:7000,image:''})).status,200);
+ assert.equal(db.prepare('SELECT COUNT(*) n FROM product_images').get().n,0);
+ assert.equal((await req('products/999/edit',{name:'Missing',price_cents:1})).status,404);
+});
