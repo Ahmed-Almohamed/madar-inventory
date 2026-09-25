@@ -114,6 +114,12 @@ async function api(req,env){
   statements.push(...ids.map(x=>db.prepare('INSERT INTO warehouse_technicians(warehouse_id,technician_id) VALUES(?,?)').bind(warehouse?id:x,warehouse?x:id)));
   await db.batch(statements);return json({ok:true});
  }
+ if(path==='/api/stock/history'&&method==='GET'){
+  const warehouse=integer(Number(url.searchParams.get('warehouse_id')),'warehouse'),page=integer(Number(url.searchParams.get('page')||1),'quantity');
+  const rows=await db.prepare('SELECT h.*,p.name product FROM stock_history h JOIN products p ON p.id=h.product_id WHERE h.warehouse_id=? ORDER BY h.id DESC LIMIT 25 OFFSET ?').bind(warehouse,(page-1)*25).all();
+  const count=await db.prepare('SELECT COUNT(*) total FROM stock_history WHERE warehouse_id=?').bind(warehouse).first();
+  return json({items:rows.results,total:count.total,page});
+ }
  if(path==='/api/stock/edit'&&method==='POST'){
   const d=await body(req),id=requestId(d.request_id),product=integer(d.product_id,'device'),warehouse=integer(d.warehouse_id,'warehouse'),quantity=integer(d.quantity,'quantity',0),expected=integer(d.expected_quantity,'quantity',0);
   if(await db.prepare('SELECT id FROM movements WHERE request_id=?').bind(id).first())return json({ok:true});

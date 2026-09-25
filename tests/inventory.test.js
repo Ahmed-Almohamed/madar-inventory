@@ -9,6 +9,7 @@ const secondMigration=readFileSync(new URL('../migrations/0002_technicians.sql',
 function setup(){
  const db=new DatabaseSync(':memory:');db.exec('PRAGMA foreign_keys=ON');db.exec(firstMigration);db.exec(secondMigration);db.exec(readFileSync(new URL('../migrations/0003_warehouse_details.sql',import.meta.url),'utf8'));db.exec(readFileSync(new URL('../migrations/0004_product_images.sql',import.meta.url),'utf8'));db.exec(readFileSync(new URL('../migrations/0005_shipping_fee.sql',import.meta.url),'utf8'));db.exec(readFileSync(new URL('../migrations/0006_customers_sim_sale_edits.sql',import.meta.url),'utf8'));
  function prepare(sql){let args=[];const stmt=db.prepare(sql);return {bind(...v){args=v;return this;},async first(){return stmt.get(...args)||null;},async run(){const r=stmt.run(...args);return {meta:{changes:Number(r.changes),last_row_id:Number(r.lastInsertRowid)}};},async all(){return {results:stmt.all(...args)};}};}
+ db.exec(readFileSync(new URL('../migrations/0007_stock_history.sql',import.meta.url),'utf8'));
  const env={DB:{prepare,async batch(stmts){db.exec('BEGIN');try{const results=[];for(const s of stmts)results.push(await s.all());db.exec('COMMIT');return results;}catch(e){db.exec('ROLLBACK');throw e;}}}};
  const req=async(path,data,headers={})=>{const response=await worker.fetch(new Request('https://madar.test/api/'+path,{method:data?'POST':'GET',headers:{Origin:'https://madar.test','Content-Type':'application/json',...headers},...(data?{body:JSON.stringify(data)}:{})}),env);return {status:response.status,body:await response.json()};};
  return {db,env,req,async seed(){await req('products',{name:'GT06N',price_cents:4500});await req('warehouses',{name:'Damascus',address:'',governorate:'دمشق',devices:[],technician_ids:[],request_id:crypto.randomUUID()});await req('warehouses',{name:'Aleppo',address:'',governorate:'حلب',devices:[],technician_ids:[],request_id:crypto.randomUUID()});await req('technicians',{name:'Installer',phone:'',warehouse_id:1,request_id:crypto.randomUUID()});await req('stock',{product_id:1,warehouse_id:1,quantity:10,request_id:crypto.randomUUID()});}};
@@ -141,4 +142,19 @@ test('Warehouse and technician edits preserve sales and atomically replace acces
  assert.equal(db.prepare('SELECT name FROM technicians WHERE id=1').get().name,'Renamed');
  assert.equal((await req('technicians/1/edit',{name:'Renamed',phone:'',warehouse_ids:[]})).status,200);
  assert.equal(db.prepare('SELECT COUNT(*) n FROM warehouse_technicians').get().n,0);
+});
+
+test('Stock history records actual before and after values without logging failed corrections',async()=>{
+ const {req,seed}=setup();await seed();await req('sales',sale());
+ let history=(await req('stock/history?warehouse_id=1')).body;
+ assert.equal(history.items[0].old_quantity,10);assert.equal(history.items[0].new_quantity,7);
+ await req('stock/edit',{product_id:1,warehouse_id:1,expected_quantity:10,quantity:2,request_id:crypto.randomUUID()});
+ assert.equal((await req('stock/history?warehouse_id=1')).body.total,history.total);
+ await req('sales/1/cancel',{});history=(await req('stock/history?warehouse_id=1')).body;
+ assert.equal(history.items[0].old_quantity,7);assert.equal(history.items[0].new_quantity,10);
+ assert.equal((await req('stock/history?warehouse_id=2')).body.total,0);
+});
+test('CSV handles Arabic, commas, quotes and formula-like input',async()=>{
+ const {csv}=await import('../public/export.js');const result=csv([['عميل','a,b','a"b','=SUM(A1)','+123']]);
+ assert.ok(result.startsWith('\ufeff'));assert.ok(result.includes('"a,b"'));assert.ok(result.includes('"a""b"'));assert.ok(result.includes("'=SUM(A1)"));assert.ok(result.includes("'+123"));
 });
