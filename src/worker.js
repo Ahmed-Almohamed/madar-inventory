@@ -144,12 +144,13 @@ async function api(req,env){
  }
  if(path==='/api/customers'&&method==='GET'){
   const page=Math.max(1,Math.floor(Number(url.searchParams.get('page'))||1)),q=(url.searchParams.get('q')||'').slice(0,100);
-  const cte=`WITH history AS (SELECT s.*,${phoneKey('s.phone')} customer_key FROM sales s), ranked AS (SELECT *,ROW_NUMBER() OVER(PARTITION BY customer_key ORDER BY sold_on DESC,id DESC) rn FROM history), totals AS (SELECT customer_key,COUNT(*) records,SUM(CASE WHEN cancelled_at IS NULL THEN quantity ELSE 0 END) units,SUM(CASE WHEN cancelled_at IS NULL THEN quantity*price_cents+installation_fee_cents+shipping_fee_cents+${simFee('sim_code')} ELSE 0 END) total_cents FROM history GROUP BY customer_key)`;
-  const from=` FROM ranked r JOIN totals t ON t.customer_key=r.customer_key WHERE r.rn=1 AND (?='' OR r.customer_key IN (SELECT customer_key FROM history WHERE instr(lower(customer),lower(?))>0 OR instr(phone,?)>0 OR instr(customer_key,?)>0 OR instr(lower(address),lower(?))>0 OR instr(lower(sim_code),lower(?))>0))`;
+  const from=url.searchParams.get('from')||'0001-01-01',to=url.searchParams.get('to')||'9999-12-31';date(from);date(to);if(from>to)fail('invalid_date');
+  const cte=`WITH history AS (SELECT s.*,${phoneKey('s.phone')} customer_key FROM sales s WHERE s.sold_on BETWEEN ? AND ?), ranked AS (SELECT *,ROW_NUMBER() OVER(PARTITION BY customer_key ORDER BY sold_on DESC,id DESC) rn FROM history), totals AS (SELECT customer_key,COUNT(*) records,SUM(CASE WHEN cancelled_at IS NULL THEN quantity ELSE 0 END) units,SUM(CASE WHEN cancelled_at IS NULL THEN quantity*price_cents+installation_fee_cents+shipping_fee_cents+${simFee('sim_code')} ELSE 0 END) total_cents FROM history GROUP BY customer_key)`;
+  const fromSql=` FROM ranked r JOIN totals t ON t.customer_key=r.customer_key WHERE r.rn=1 AND (?='' OR r.customer_key IN (SELECT customer_key FROM history WHERE instr(lower(customer),lower(?))>0 OR instr(phone,?)>0 OR instr(customer_key,?)>0 OR instr(lower(address),lower(?))>0 OR instr(lower(sim_code),lower(?))>0))`;
   const exact=url.searchParams.get('customer_phone');
-  const args=[q,q,q,q.replace(/[+\s()-]/g,''),q,q];
+  const args=[from,to,q,q,q,q.replace(/[+\s()-]/g,''),q,q];
   const exactWhere=exact===null?'':' AND r.customer_key=?';if(exact!==null)args.push(exact.replace(/[+\s()-]/g,''));
-  const result=await db.batch([db.prepare(cte+' SELECT r.customer_key,r.customer,r.phone,r.address,r.sold_on,t.records,t.units,t.total_cents'+from+exactWhere+' ORDER BY r.sold_on DESC,r.id DESC LIMIT 25 OFFSET ?').bind(...args,(page-1)*25),db.prepare(cte+' SELECT COUNT(*) total'+from+exactWhere).bind(...args)]);
+  const result=await db.batch([db.prepare(cte+' SELECT r.customer_key,r.customer,r.phone,r.address,r.sold_on,t.records,t.units,t.total_cents'+fromSql+exactWhere+' ORDER BY r.sold_on DESC,r.id DESC LIMIT 25 OFFSET ?').bind(...args,(page-1)*25),db.prepare(cte+' SELECT COUNT(*) total'+fromSql+exactWhere).bind(...args)]);
   return json({items:result[0].results,total:result[1].results[0].total,page});
  }
  if(/^\/api\/sales\/\d+\/cancel$/.test(path)&&method==='POST'){

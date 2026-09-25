@@ -158,3 +158,15 @@ test('CSV handles Arabic, commas, quotes and formula-like input',async()=>{
  const {csv}=await import('../public/export.js');const result=csv([['عميل','a,b','a"b','=SUM(A1)','+123']]);
  assert.ok(result.startsWith('\ufeff'));assert.ok(result.includes('"a,b"'));assert.ok(result.includes('"a""b"'));assert.ok(result.includes("'=SUM(A1)"));assert.ok(result.includes("'+123"));
 });
+
+test('Customer and sales date filters include only matched purchases across boundaries',async()=>{
+ const {req,seed}=setup();await seed();
+ await req('sales',{...sale(),quantity:1,sold_on:'2026-01-01',customer:'Before'});
+ await req('sales',{...sale(),quantity:2,sold_on:'2026-02-01',customer:'Inside'});
+ await req('sales',{...sale(),quantity:1,sold_on:'2026-03-01',phone:'0888888888',customer:'After'});
+ const query='from=2026-02-01&to=2026-02-28';
+ const c=(await req('customers?'+query)).body;assert.equal(c.total,1);assert.equal(c.items[0].units,2);assert.equal(c.items[0].customer,'Inside');
+ const sales=(await req('sales?'+query)).body;assert.equal(sales.total,1);assert.equal(sales.items[0].sold_on,'2026-02-01');
+ assert.equal((await req('customers?'+query+'&q=After')).body.total,0);
+ assert.equal((await req('customers?from=2026-03-01&to=2026-02-01')).status,400);
+});
