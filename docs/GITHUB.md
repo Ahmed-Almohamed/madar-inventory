@@ -1,37 +1,37 @@
-# الرفع إلى GitHub
+# Working with the repository
 
-أنشئ مستودعاً فارغاً في حسابك، وحدد Private أو Public حسب رغبتك. لا تضف README أو gitignore من GitHub لأنهما موجودان هنا.
+Repository: [Ahmed-Almohamed/madar-inventory](https://github.com/Ahmed-Almohamed/madar-inventory).
 
-داخل مجلد المشروع، إذا لم يكن Git مهيأً، شغّل `git init -b main`. ثم:
-
-```sh
-git add .
-git diff --cached --stat
-git commit -m "Prepare Madar inventory app"
-```
-
-إذا طلب Git هوية المؤلف، اضبط اسمك وبريدك محلياً للمستودع. استبدل `REPOSITORY` بالاسم الفعلي:
+## Clone and run
 
 ```sh
-git remote add origin https://github.com/Ahmed-Almohamed/REPOSITORY.git
-git push -u origin main
+git clone https://github.com/Ahmed-Almohamed/madar-inventory.git
+cd madar-inventory
+npm ci
+npm run db:local
+npm run dev
 ```
 
-أكمل تسجيل الدخول عندما يطلبه Git Credential Manager، أو استخدم GitHub Desktop. إذا كان origin موجوداً، افحص `git remote -v` قبل تغييره. لا تضع كلمات مرور أو tokens داخل الملفات أو الروابط.
+Use Git Credential Manager or GitHub Desktop if Git asks you to sign in. Keep tokens and passwords out of remote URLs and project files.
 
-## الملفات
-
-يُرفع الكود والوثائق والخطوط ورخصها والترحيلات وpackage-lock.json. يستبعد `.gitignore` الأسرار وقواعد البيانات والنسخ الاحتياطية وnode_modules وdist. ملفات SQL داخل migrations مستثناة من التجاهل لأنها هيكل التطبيق. راجع `git ls-files` قبل الرفع ولا تضف الملفات المتجاهلة بالقوة.
-
-## التحديث
+## Push a change
 
 ```sh
 npm run check
 npm run build
-git add .
-git diff --cached --stat
+git status --short
+git add <changed-files>
+git diff --cached
 git commit -m "Describe the change"
-git push
+git push origin main
 ```
 
-تبويب Actions يعرض الفحص الآلي. رفع الكود لا ينشر الموقع ولا ينقل بيانات D1. راجع [دليل Cloudflare](CLOUDFLARE.md).
+Review the staged diff before committing. GitHub Actions runs the checks in [check.yml](../.github/workflows/check.yml). Pushing code does not publish the app; deployment is a separate step covered in the [Cloudflare guide](CLOUDFLARE.md).
+
+## What belongs in Git
+
+Commit source code, documentation, migrations, bundled fonts and their licenses, and `package-lock.json`.
+
+The `.gitignore` excludes secrets, `.wrangler/`, database files, backups, exports, `node_modules/`, and build output. SQL migrations are intentionally tracked. Do not force-add ignored customer records or database exports.
+
+Add a new migration for schema changes rather than editing one that has already been applied.

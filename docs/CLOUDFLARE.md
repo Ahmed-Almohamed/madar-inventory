@@ -1,6 +1,8 @@
-# نشر مدار على Cloudflare
+# Deploying to Cloudflare
 
-## أول نشر بقاعدة فارغة
+Madar runs on a Worker with a D1 database bound as `DB`. GitHub Pages alone cannot run the API.
+
+## First deployment to your own account
 
 ```sh
 npm ci
@@ -9,7 +11,7 @@ npx wrangler login
 npx wrangler d1 create madar-db
 ```
 
-انسخ database_id الناتج إلى `wrangler.jsonc` بدل المعرّف الصفري، وأبقِ الربط DB وmigrations_dir كما هما. تأكد من حساب Cloudflare المستخدم. معرّف القاعدة ليس كلمة مرور؛ لا تضع API tokens في الملف.
+Set `database_id` in `wrangler.jsonc` to the ID returned by the create command. The checked-in configuration points to the existing Madar installation; replace it when deploying your own copy. Keep the `DB` binding and migrations directory intact. Database IDs are not secrets; API tokens should never be committed.
 
 ```sh
 npm run db:remote
@@ -17,51 +19,60 @@ npm run build
 npm run deploy
 ```
 
-الأمر الأخير يعرض رابط Worker. التطبيق لا يحتوي مصادقة؛ قيّد الوصول قبل إدخال بيانات العملاء. حماية المستودع لا تحمي التطبيق المنشور.
+Wrangler prints the deployed URL. The app has no built-in login: anyone with access to that URL can read and change its data. Repository visibility does not control app access.
 
-## الترحيلات
+## Updating an existing installation
 
-| الترحيل | المحتوى |
+1. Export a fresh backup of the production database.
+2. Run `npm run check` and `npm run build`.
+3. Apply pending migrations with `npm run db:remote`.
+4. Deploy with `npm run deploy`.
+5. Check the app's pages, images, reports, and language switch.
+
+Keep production and local data separate. The `dev` and `db:local` scripts use `wrangler.local.jsonc`; remote commands use `wrangler.jsonc`.
+
+## Migrations
+
+| Migration | Adds |
 | --- | --- |
-| 0001 | الأجهزة والمخازن والمبيعات وحركات المخزون |
-| 0002 | الفنيون وأجور التركيب |
-| 0003 | المحافظات وربط الفنيين بالمخازن |
-| 0004 | صور الأجهزة |
-| 0005 | أجور الشحن |
+| `0001` | Products, warehouses, sales, and stock movements |
+| `0002` | Technicians and installation fees |
+| `0003` | Governorates and technician-to-warehouse links |
+| `0004` | Product photos |
+| `0005` | Shipping fees |
+| `0006` | SIM codes, sale revisions, and stock reconciliation for sale edits |
+| `0007` | Stock history with before/after quantities |
 
-عند التحديث خذ نسخة احتياطية، ثم طبّق `npm run db:remote` قبل `npm run deploy`. لا تحذف الترحيلات ولا تعدّل ما سبق تطبيقه.
+Do not delete or rewrite applied migrations. Add a new migration for future schema changes.
 
-## النسخ الاحتياطية ونقل البيانات
+## Backups
 
-البيانات المحلية لا تنتقل تلقائياً. أنشئ مجلد backups قبل التصدير (مستبعد من Git):
+Create a `backups` directory if it does not already exist, then export with a new filename each time:
 
 ```sh
-mkdir backups
-npx wrangler d1 export DB --local --config wrangler.local.jsonc --output=backups/local.sql
-npx wrangler d1 export DB --remote --output=backups/remote.sql
+npx wrangler d1 export DB --remote --output=backups/remote-YYYY-MM-DD.sql
+npx wrangler d1 export DB --local --config wrangler.local.jsonc --output=backups/local-YYYY-MM-DD.sql
 ```
 
-استخدم أسماء جديدة للنسخ التالية. هذه الملفات تتضمن بيانات العملاء والصور، فلا ترفعها للمستودع.
+Exports contain customer records and images. Keep them out of Git; `backups/` is already ignored.
 
-لنقل البيانات المحلية، اختبر استيراد النسخة الكاملة إلى قاعدة D1 فارغة منفصلة باستخدام `wrangler d1 execute` و`--file` أولاً. لا تستورد فوق جداول أو مبيعات موجودة، ولا تطبّق الترحيلات فوق مخطط مستورد دون التحقق من سجل d1_migrations. التطبيق يحتوي triggers تعدّل المخزون؛ راجع الكميات والمبيعات والترحيلات بعد الاستيراد قبل ربط قاعدة الإنتاج. لا يتضمن المشروع نقلاً تلقائياً للبيانات.
+## Moving local data
 
-مراجع: [استيراد وتصدير D1](https://developers.cloudflare.com/d1/best-practices/import-export-data/) و[الترحيلات](https://developers.cloudflare.com/d1/reference/migrations/).
+Local records are not uploaded during deployment. Test a full import into a separate, empty D1 database before switching production to it. Do not import over existing sales or apply migrations to an imported schema without checking its `d1_migrations` records.
 
-## بعد النشر
-
-تحقق من الصفحات واللغة والصور والتقارير. جرّب بيانات اختبارية للتأكد من خصم المخزون وإعادته بعد إلغاء المبيع. تحقق من تقييد الوصول إلى الصفحة ومسارات /api/ معاً.
-
-الخطة المجانية تخضع لحصص حسابك: [Workers](https://developers.cloudflare.com/workers/platform/pricing/) و[D1](https://developers.cloudflare.com/d1/platform/pricing/). رفع المشروع إلى GitHub لا ينشئ D1 ولا ينشر الموقع تلقائياً.
-
-### تجهيز نسخة محلية للاستيراد
-
-بعد تصدير نسخة محلية، يمكن تجهيز ترتيب الجداول والتحقق من الاستيراد داخل SQLite مؤقتة:
+The import helper orders tables before data, places triggers after data, and validates foreign keys in a temporary SQLite database:
 
 ```sh
 node scripts/prepare-import.mjs backups/local.sql backups/import.sql
 ```
 
-الأداة تنشئ كل الجداول قبل إدخال البيانات، وتُبقي triggers بعد البيانات، وتفحص العلاقات. ترفض استبدال ملف موجود. الناتج مخصص لقاعدة بعيدة فارغة فقط. لا ترفع أي ملف من backups إلى GitHub.
+It refuses to overwrite an existing output file. Its output is intended for an **empty database only**. Verify stock quantities, sale totals, and migration records after importing. There is no automatic local-to-production data sync.
 
+## References
 
-إعداد الإنتاج في wrangler.jsonc، وإعداد المعاينة في wrangler.local.jsonc للحفاظ على قاعدة البيانات المحلية مستقلة. أوامر dev وdb:local تستخدم ملف المعاينة تلقائياً.
+- [D1 import and export](https://developers.cloudflare.com/d1/best-practices/import-export-data/)
+- [D1 migrations](https://developers.cloudflare.com/d1/reference/migrations/)
+- [Workers pricing and quotas](https://developers.cloudflare.com/workers/platform/pricing/)
+- [D1 pricing and quotas](https://developers.cloudflare.com/d1/platform/pricing/)
+
+GitHub Actions only runs checks and a deployment dry run. It does not create D1 databases, publish the Worker, or require Cloudflare secrets.

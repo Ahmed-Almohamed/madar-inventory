@@ -1,31 +1,34 @@
-# مدار | Madar
+<div align="center">
+  <img src="public/favicon.svg" width="64" height="64" alt="Madar logo">
+  <h1>Madar Inventory</h1>
+  <p>Sales, stock, and installation records for a GPS device business.</p>
 
-إدارة مبسّطة لمبيعات أجهزة التتبع والمخزون وفنيي التركيب، بالعربية والإنكليزية، مبنية على **Cloudflare Workers + D1**.
+  ![JavaScript](https://img.shields.io/badge/JavaScript-ES_modules-F7DF1E?logo=javascript&logoColor=111827)
+  ![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare&logoColor=white)
+  ![Cloudflare D1](https://img.shields.io/badge/Database-D1-F38020?logo=cloudflare&logoColor=white)
+  ![Languages](https://img.shields.io/badge/UI-Arabic_%2F_English-191970)
 
-تم البرمجة من خلال [Sy0s](https://github.com/Ahmed-Almohamed).
+  [Getting started](#-getting-started) · [Deployment](docs/CLOUDFLARE.md) · [Repository guide](docs/GITHUB.md)
+</div>
 
-## المميزات
+---
 
-- تسجيل المبيع من قائمة الأجهزة، مع الكمية والسعر والعميل والهاتف والعنوان ومصدر العميل.
-- قسم العملاء مع البحث بالاسم والهاتف والعنوان وكود الشريحة، وملف لكل عميل يعرض مشترياته وتفاصيلها.
-- شريحة اختيارية واحدة لكل مبيع بسعر ثابت 5 دولارات، مع كود قابل للبحث ومنع تكراره في المبيعات الفعالة.
-- تعديل تفاصيل أي مبيع، مع تصحيح المخزون تلقائياً عند تغيير الجهاز أو المخزن أو الكمية ومنع التعارض بين التعديلات المتزامنة.
-- اختيار فني أو تركيب العميل بنفسه؛ أجور التركيب والشحن اختيارية ومنفصلة عن قيمة الأجهزة.
-- تصفية حسب الفني، محافظة المخزن، مصدر العميل، التاريخ والبحث النصي.
-- إدارة المخازن والمحافظات وكميات الأجهزة والفنيين المرتبطين بها.
-- صور اختيارية للأجهزة، تُصغّر في المتصفح وتُحفظ في قاعدة البيانات.
-- الضغط على الجهاز يعرض مبيعاته ورصيده في كل مخزن، بما فيها المخازن ذات الرصيد صفر.
-- تقرير لكل فني يشمل تركيباته ومبيعات المخازن المرتبطة به حالياً، مع التفاصيل والتصفية والمجاميع.
-- إلغاء المبيع يعيد الكمية مرة واحدة ويحفظ السجل، دون احتسابه في الملخص الشهري.
-- الدولار الأمريكي، دعم RTL/LTR والجوال، وخطوط Cairo وInter محلية.
+Madar keeps device sales, warehouse quantities, customers, and installation technicians in one place. Built for a small team selling GPS trackers, with an Arabic/English interface that works on phones and desktops.
 
-- اقتراح العملاء السابقين عند كتابة رقم الهاتف، مع تعبئة بيانات العميل بعد اختياره.
-- تصدير نتائج المبيعات والعملاء الحالية بصيغة CSV متوافقة مع Excel، بما يشمل جميع صفحات النتائج.
-- سجل تغيّرات الكميات داخل تفاصيل المخزن، يعرض قبل/بعد والتاريخ بتوقيت UTC منذ تطبيق الترحيل 0007، ولا يعيد بناء التاريخ السابق.
+## 📦 What it does
 
-## التشغيل المحلي
+| Area | Features |
+| --- | --- |
+| **Sales** | Record and edit sales, optional installation and shipping fees, customer self-installation, and cancellation with stock restoration. |
+| **Inventory** | Edit device names, prices, and photos. Manage warehouses, governorates, technician links, and quantities. |
+| **Customers** | Search contact details and purchase history. Reuse a returning customer's details when recording a sale. |
+| **Technicians** | Edit profiles and warehouse links. View installations and related warehouse sales. |
+| **SIM cards** | Add one optional $5 SIM per sale, with a searchable code unique among active sales. |
+| **Reports** | Filter sales, export matching sales or customers to CSV, and review stock changes with before/after quantities. |
 
-المتطلبات: Node.js 24 وnpm.
+## 🚀 Getting started
+
+Requires **Node.js 24** and npm.
 
 ```sh
 npm ci
@@ -33,61 +36,59 @@ npm run db:local
 npm run dev
 ```
 
-افتح http://127.0.0.1:8787. تبدأ النسخة الجديدة بقاعدة فارغة؛ أضف الأجهزة ثم المخازن وكمياتها والفنيين. لا يلزم ملف أسرار للتشغيل المحلي. البيانات المحلية داخل `.wrangler/` لا تُرفع إلى GitHub.
+Open [localhost:8787](http://127.0.0.1:8787). A fresh database starts empty: add a device, create a warehouse with stock, then record a sale. Local development does not require a secrets file.
 
-## نطاق التطبيق
+## 🛠 Development
 
-مساحة عمل واحدة لشركة واحدة، وليست منصة اشتراكات متعددة الشركات أو نظام تتبع GPS مباشر.
-
-**لا توجد مصادقة داخل التطبيق.** نشره على رابط عام يتيح لمن يصل إليه قراءة البيانات وتعديلها. خصوصية مستودع GitHub لا تحمي رابط التطبيق. قيّد الوصول قبل الاستخدام ببيانات عملاء حقيقية. ربط الفني بالمخزن تنظيم للمعلومات وليس صلاحيات دخول.
-
-تقرير الفني يعتمد على روابط المخازن الحالية، ولا يثبت أن الفني هو البائع في المخزن المشترك. المحافظة في التصفية هي محافظة المخزن. أجرة التركيب والشحن لكل المبيع وليستا لكل قطعة. الصور اختيارية: JPG/PNG/WebP حتى 10 MB، تُحفظ JPEG مضغوطة حتى 200 KB. أسماء المستخدمين للمنتجات والعملاء لا تُترجم تلقائياً.
-
-## الأوامر
-
-تُجمع مشتريات العميل تلقائياً حسب رقم هاتفه بعد تجاهل المسافات والشرطات والأقواس وعلامة `+`؛ استخدم صيغة موحّدة لمفتاح البلد. تظهر معلومات أحدث مبيع في بطاقة العميل. إجمالي مشترياته يشمل الأجهزة والتركيب والشحن والشريحة ويستثني المبيعات الملغاة. تعديل سجل ملغى لا يعيد تفعيله ولا يغيّر المخزون.
-
-لتحديث نسخة موجودة، طبّق الترحيل `0006_customers_sim_sale_edits.sql` عبر `npm run db:remote` قبل `npm run deploy`. يحتفظ الترحيل بالمبيعات السابقة دون شريحة. خذ نسخة احتياطية قبل تحديث قاعدة الإنتاج.
-
-| الأمر | الوظيفة |
-| --- | --- |
-| `npm run dev` | المعاينة المحلية |
-| `npm run db:local` | ترحيلات قاعدة البيانات المحلية |
-| `npm run db:remote` | ترحيلات قاعدة Cloudflare |
-| `npm run check` | فحص الصياغة والاختبارات |
-| `npm run build` | تجربة النشر دون رفع ملفات |
-| `npm run deploy` | نشر Worker والواجهة |
-
-## النشر وGitHub
-
-راجع [دليل Cloudflare وقاعدة البيانات](docs/CLOUDFLARE.md) و[دليل GitHub](docs/GITHUB.md).
-
-المستودع يتضمن هيكل قاعدة البيانات وترحيلاتها فقط. العملاء والمبيعات والصور المحلية لا تنتقل تلقائياً إلى GitHub أو Cloudflare. GitHub Pages وحده لا يشغّل هذا التطبيق.
-
-الفحص الآلي لكل push وpull request يشغّل الاختبارات وتجربة البناء فقط، ولا ينشر الموقع تلقائياً أو يحتاج أسرار Cloudflare.
-
-## هيكل المشروع
+Plain JavaScript, HTML, and CSS on the frontend; a Cloudflare Worker serves the API and static assets. Data lives in D1. Fonts are bundled locally.
 
 ```text
-public/                  الواجهة والترجمة والتنسيق والخطوط
-src/worker.js            واجهات البيانات وخادم Cloudflare
-migrations/             ترحيلات D1 بالترتيب
-tests/inventory.test.js  اختبارات SQLite في الذاكرة
-docs/                   أدلة التشغيل والنشر
-wrangler.jsonc          إعداد Worker وربط DB
-.github/workflows/      الفحص الآلي
+public/              UI, translations, styles, and fonts
+src/worker.js        API and request handling
+migrations/          Ordered D1 schema migrations
+tests/               In-memory SQLite tests
+docs/                Deployment and repository guides
+scripts/             Local setup and import helpers
 ```
 
-لا تعدّل ترحيلاً سبق تطبيقه؛ أضف ترحيلاً جديداً. الاختبارات لا تمس قاعدة بياناتك المحلية، وتغطي المخزون، منع البيع الزائد، تكرار الطلبات، الإلغاء، التقارير، الفلاتر، الصور، الأجور والترجمة.
+| Command | Purpose |
+| --- | --- |
+| `npm run dev` | Start the local app |
+| `npm run db:local` | Apply local migrations |
+| `npm run check` | Check syntax and run tests |
+| `npm run build` | Dry-run the Worker deployment |
+| `npm run db:remote` | Apply production migrations |
+| `npm run deploy` | Publish the Worker and frontend |
 
-## الخطوط والترخيص
+GitHub Actions runs checks and a deployment dry run on pushes and pull requests. It does **not** deploy the app or copy database records.
 
-رخص الخطوط مرفقة في `public/CAIRO-LICENSE.txt` و`public/INTER-LICENSE.txt` و`public/FONT-LICENSE.txt`. لم تُحدّد رخصة مفتوحة للمصدر البرمجي؛ نشر الكود لا يمنح تلقائياً حق إعادة استخدامه.
+## ☁️ Deployment
 
-## English overview
+See the [Cloudflare guide](docs/CLOUDFLARE.md) for setup, migrations, and backups. Production uses `wrangler.jsonc`; local development uses `wrangler.local.jsonc`.
 
-Madar is a bilingual Arabic/English tracker-device inventory and sales app running on Cloudflare Workers and D1. It includes warehouses, technician reports, device stock and sales history, product photos, self-installation, and optional installation/shipping fees.
+For an existing installation, back up D1 before applying migrations and deploying:
 
-Customers are grouped by phone number with searchable purchase histories. Sales support one optional $5 SIM with a searchable unique active code. Existing sales can be edited with atomic inventory reconciliation and optimistic concurrency checks; cancelled records remain cancelled.
+```sh
+npm run check
+npm run build
+npm run db:remote
+npm run deploy
+```
 
-Use Node.js 24. Run `npm ci`, `npm run db:local`, then `npm run dev`. Run `npm run check` and `npm run build` before deploying. No customer records or local databases belong in the repository. The app has **no authentication**; public deployment exposes its data and write operations to visitors.
+**Access model:** this is a single-business workspace with no built-in login. Anyone who can reach the deployed app can read and edit its data. Technician-to-warehouse links organize records; they are not access permissions. A private GitHub repository does not restrict the deployed app.
+
+## 📝 How records work
+
+- Customer history is grouped by phone number, ignoring spaces, hyphens, parentheses, and `+`. Use consistent country prefixes. The latest matching sale supplies the displayed contact details.
+- Installation, shipping, and the optional SIM charge apply to the whole sale. Existing sale prices stay unchanged when a device's default price changes.
+- Cancelling a sale restores stock once. Editing a cancelled record does not reactivate it.
+- Technician reports include installations and sales from their **currently linked** warehouses. A shared warehouse sale does not identify the technician as its seller.
+- Date and search filters apply to CSV exports across all result pages. Customer date filters also limit the purchases included in customer totals. Apply filters with **Search** before exporting.
+- Stock history starts when migration `0007` is applied. It records subsequent quantity changes in UTC; earlier history is not reconstructed.
+- Photos accept JPG, PNG, or WebP up to 10 MB and are compressed to JPEG, at most 200 KB, before storage.
+
+## Credits
+
+Built by **[Sy0s](https://github.com/Ahmed-Almohamed)**.
+
+Font licenses are included in [Cairo](public/CAIRO-LICENSE.txt), [Inter](public/INTER-LICENSE.txt), and [FONT-LICENSE.txt](public/FONT-LICENSE.txt). No open-source license has been assigned to the application code.
