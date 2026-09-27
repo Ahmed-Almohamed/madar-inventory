@@ -15,6 +15,8 @@
 
 Madar keeps device sales, warehouse quantities, customers, and installation technicians in one place. Built for a small team selling GPS trackers, with an Arabic/English interface that works on phones and desktops.
 
+The main navigation has two areas: **Customers** and **Goods**. The customer directory groups car rental businesses, accessories shops, and wholesalers. Each record stores a city, phone, details, price, quantity, and notes independently of sales and stock. Sales and purchase history remain available under Customers; warehouses and technicians remain under Goods.
+
 ## 📦 What it does
 
 | Area | Features |

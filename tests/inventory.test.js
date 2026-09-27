@@ -10,6 +10,7 @@ function setup(){
  const db=new DatabaseSync(':memory:');db.exec('PRAGMA foreign_keys=ON');db.exec(firstMigration);db.exec(secondMigration);db.exec(readFileSync(new URL('../migrations/0003_warehouse_details.sql',import.meta.url),'utf8'));db.exec(readFileSync(new URL('../migrations/0004_product_images.sql',import.meta.url),'utf8'));db.exec(readFileSync(new URL('../migrations/0005_shipping_fee.sql',import.meta.url),'utf8'));db.exec(readFileSync(new URL('../migrations/0006_customers_sim_sale_edits.sql',import.meta.url),'utf8'));
  function prepare(sql){let args=[];const stmt=db.prepare(sql);return {bind(...v){args=v;return this;},async first(){return stmt.get(...args)||null;},async run(){const r=stmt.run(...args);return {meta:{changes:Number(r.changes),last_row_id:Number(r.lastInsertRowid)}};},async all(){return {results:stmt.all(...args)};}};}
  db.exec(readFileSync(new URL('../migrations/0007_stock_history.sql',import.meta.url),'utf8'));
+ db.exec(readFileSync(new URL('../migrations/0008_client_directory.sql',import.meta.url),'utf8'));
  const env={DB:{prepare,async batch(stmts){db.exec('BEGIN');try{const results=[];for(const s of stmts)results.push(await s.all());db.exec('COMMIT');return results;}catch(e){db.exec('ROLLBACK');throw e;}}}};
  const req=async(path,data,headers={})=>{const response=await worker.fetch(new Request('https://madar.test/api/'+path,{method:data?'POST':'GET',headers:{Origin:'https://madar.test','Content-Type':'application/json',...headers},...(data?{body:JSON.stringify(data)}:{})}),env);return {status:response.status,body:await response.json()};};
  return {db,env,req,async seed(){await req('products',{name:'GT06N',price_cents:4500});await req('warehouses',{name:'Damascus',address:'',governorate:'دمشق',devices:[],technician_ids:[],request_id:crypto.randomUUID()});await req('warehouses',{name:'Aleppo',address:'',governorate:'حلب',devices:[],technician_ids:[],request_id:crypto.randomUUID()});await req('technicians',{name:'Installer',phone:'',warehouse_id:1,request_id:crypto.randomUUID()});await req('stock',{product_id:1,warehouse_id:1,quantity:10,request_id:crypto.randomUUID()});}};
@@ -169,4 +170,16 @@ test('Customer and sales date filters include only matched purchases across boun
  const sales=(await req('sales?'+query)).body;assert.equal(sales.total,1);assert.equal(sales.items[0].sold_on,'2026-02-01');
  assert.equal((await req('customers?'+query+'&q=After')).body.total,0);
  assert.equal((await req('customers?from=2026-03-01&to=2026-02-01')).status,400);
+});
+
+test('Independent customer directory supports categories, nullable prices, search and stale edit protection',async()=>{
+ const {req,seed,db}=setup();await seed();const d={name:'Rental A',category:'rental',city:'Aleppo',phone:'0991234567',details:'Office',price_cents:4200,quantity:3,notes:'Call first',request_id:crypto.randomUUID()};
+ assert.equal((await req('clients',d)).status,201);assert.equal((await req('clients',d)).status,200);
+ let list=(await req('clients?category=rental&q=Aleppo')).body;assert.equal(list.total,1);assert.equal(list.items[0].quantity,3);
+ assert.equal((await req('clients?category=wholesale')).body.total,0);
+ assert.equal((await req('clients/1/edit',{...d,category:'wholesale',revision:1,price_cents:null,quantity:null})).status,200);
+ assert.equal((await req('clients/1/edit',{...d,revision:1})).status,409);
+ list=(await req('clients?category=wholesale')).body;assert.equal(list.items[0].price_cents,null);assert.equal(list.items[0].quantity,null);
+ assert.equal((await req('clients',{...d,category:'invalid'})).status,400);
+ assert.equal(db.prepare('SELECT COUNT(*) n FROM sales').get().n,0);assert.equal(db.prepare('SELECT quantity FROM stock WHERE warehouse_id=1').get().quantity,10);
 });

@@ -42,6 +42,7 @@ Keep production and local data separate. The `dev` and `db:local` scripts use `w
 | `0005` | Shipping fees |
 | `0006` | SIM codes, sale revisions, and stock reconciliation for sale edits |
 | `0007` | Stock history with before/after quantities |
+| `0008` | Independent customer directory and business categories |
 
 Do not delete or rewrite applied migrations. Add a new migration for future schema changes.
 

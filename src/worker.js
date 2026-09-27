@@ -27,6 +27,28 @@ async function api(req,env){
  if(!['GET','POST'].includes(method))fail('method_not_allowed',405);
  // No application sign-in. Cross-origin write protection remains enabled.
  if(method!=='GET'&&req.headers.get('Origin')!==url.origin)fail('origin_not_allowed',403);
+ if(path==='/api/clients'&&method==='GET'){
+  const category=url.searchParams.get('category')||'',q=(url.searchParams.get('q')||'').slice(0,100),page=integer(Number(url.searchParams.get('page')||1),'quantity');
+  if(category&&!['rental','accessories','wholesale'].includes(category))fail('invalid_request');
+  const where=` WHERE (?='' OR category=?) AND (?='' OR instr(lower(name),lower(?))>0 OR instr(lower(city),lower(?))>0 OR instr(phone,?)>0 OR instr(lower(details),lower(?))>0 OR instr(lower(notes),lower(?))>0)`;
+  const args=[category,category,q,q,q,q,q,q];
+  const r=await db.batch([db.prepare('SELECT * FROM client_directory'+where+' ORDER BY name,id LIMIT 25 OFFSET ?').bind(...args,(page-1)*25),db.prepare('SELECT COUNT(*) total FROM client_directory'+where).bind(...args)]);
+  return json({items:r[0].results,total:r[1].results[0].total,page});
+ }
+ if((path==='/api/clients'||/^\/api\/clients\/\d+\/edit$/.test(path))&&method==='POST'){
+  const d=await body(req),id=path==='/api/clients'?null:Number(path.split('/')[3]);
+  if(!['rental','accessories','wholesale'].includes(d.category))fail('invalid_request');
+  const phone=str(d.phone||'','phone',30,false);if(phone&&!/^[+\d\s()-]{6,30}$/.test(phone))fail('invalid_field',400,'phone');
+  const values=[str(d.name,'customer_name'),d.category,str(d.city||'','city',200,false),phone,str(d.details||'','client_details',2000,false),d.price_cents==null?null:integer(d.price_cents,'unit_price',0,100000000),d.quantity==null?null:integer(d.quantity,'quantity',0),str(d.notes||'','notes',2000,false)];
+  if(id){
+   const r=await db.prepare('UPDATE client_directory SET name=?,category=?,city=?,phone=?,details=?,price_cents=?,quantity=?,notes=?,revision=revision+1 WHERE id=? AND revision=?').bind(...values,id,integer(d.revision,'revision')).run();
+   if(!r.meta.changes)fail('client_changed',409);
+  }else{
+   const request=requestId(d.request_id);if(await db.prepare('SELECT id FROM client_directory WHERE request_id=?').bind(request).first())return json({ok:true});
+   await db.prepare('INSERT INTO client_directory(name,category,city,phone,details,price_cents,quantity,notes,request_id) VALUES(?,?,?,?,?,?,?,?,?)').bind(...values,request).run();
+  }
+  return json({ok:true},id?200:201);
+ }
  if(path==='/api/overview'&&method==='GET'){
   const day=today(),month=day.slice(0,7)+'-01';
   const r=await db.batch([
