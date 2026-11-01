@@ -21,7 +21,7 @@ This is a data mirror, not Odoo-native sale orders, invoices, stock pickings, or
 
 ODOO_ENABLED, ODOO_URL, ODOO_COMPANY_ID and ODOO_SOURCE are nonsecret Worker variables. ODOO_API_KEY is a Cloudflare Worker secret. Local development leaves synchronization disabled to avoid mixing test and production data. Each database has a unique replication namespace.
 
-scripts/provision-odoo.mjs --apply additively provisions Odoo 20 models/views/menu. It reads the key from the environment or ignored backups/odoo-key.txt. Access is restricted to the existing administrator group and active company scope. Select **مدار — فرع سوريا** in Odoo's company selector to see the records. The existing Salla integration is untouched.
+scripts/provision-odoo.mjs --apply additively provisions Odoo 20 models/views/menu. It reads the key from the environment or ignored backups/odoo-key.txt. Access is restricted to the existing administrator group and the companies assigned to that user, independently of the active company in each browser. Both the parent-company and Syria-branch contexts were verified. Current records hide deleted entries; change history retains their audit versions. The existing Salla integration is untouched.
 
 The key inherits the existing account's administrator permissions. A dedicated branch-limited integration account is recommended later. To rotate, replace the Worker secret and revoke the old key in Odoo. Do not delete pending outbox data. The connection-test expense mirror is labeled **اختبار الربط** and is not an accounting entry.
 

@@ -41,6 +41,20 @@ export function auditedDB(db,user,path,details){
 }
 export async function accountApi(req,db,user){
  const url=new URL(req.url),path=url.pathname;
+ if(path==='/api/admin/reset'&&req.method==='POST'){
+  if(user.role!=='admin')fail('forbidden',403);
+  const d=await input(req);
+  if(!['مسح الكل','CLEAR ALL'].includes(d.confirmation)||! /^[a-zA-Z0-9-]{16,80}$/.test(d.request_id||''))fail('invalid_request');
+  if(await db.prepare('SELECT 1 FROM workspace_resets WHERE request_id=? AND completed_at IS NOT NULL').bind(d.request_id).first())return json({ok:true});
+  const guard='EXISTS(SELECT 1 FROM workspace_resets WHERE request_id=? AND completed_at IS NULL)';
+  const statements=[db.prepare('INSERT INTO workspace_resets(request_id,actor_id) VALUES(?,?) ON CONFLICT DO NOTHING').bind(d.request_id,user.id)];
+  for(const table of ['stock_transfers','movements','stock_history','sales','stock','product_images','warehouse_technicians','expenses','client_directory','activity'])statements.push(db.prepare(`DELETE FROM ${table} WHERE ${guard}`).bind(d.request_id));
+  statements.push(db.prepare(`UPDATE technicians SET warehouse_id=NULL,custody_warehouse_id=NULL,stock_warehouse_id=NULL WHERE ${guard}`).bind(d.request_id));
+  statements.push(db.prepare(`UPDATE warehouses SET custody_owner_id=NULL WHERE ${guard}`).bind(d.request_id));
+  for(const table of ['technicians','warehouses','products'])statements.push(db.prepare(`DELETE FROM ${table} WHERE ${guard}`).bind(d.request_id));
+  statements.push(db.prepare("UPDATE workspace_resets SET completed_at=datetime('now') WHERE request_id=? AND completed_at IS NULL").bind(d.request_id));
+  await db.batch(statements);return json({ok:true});
+ }
  if(path==='/api/users'&&req.method==='GET')return json({items:(await db.prepare('SELECT id,username,name,role,active,created_at FROM users ORDER BY id').all()).results});
  if(path==='/api/users'&&req.method==='POST'){
   const d=await input(req),username=String(d.username||'').trim().toLowerCase(),name=String(d.name||'').trim();if(!/^[a-z0-9._-]{3,60}$/.test(username)||!name||name.length>100||typeof d.password!=='string'||d.password.length<10||d.password.length>200)fail('invalid_account');

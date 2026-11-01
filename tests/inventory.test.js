@@ -17,6 +17,7 @@ function setup(custodyMigration=true){
  db.exec(readFileSync(new URL('../migrations/0010_accounts_expenses.sql',import.meta.url),'utf8'));
  if(custodyMigration)db.exec(readFileSync(new URL('../migrations/0011_odoo_sync.sql',import.meta.url),'utf8'));
  else db.exec('CREATE TABLE odoo_actor(id INTEGER PRIMARY KEY,name TEXT,operation TEXT); INSERT INTO odoo_actor(id) VALUES(1)');
+ db.exec(readFileSync(new URL('../migrations/0012_workspace_reset.sql',import.meta.url),'utf8'));
  db.exec("INSERT INTO users(username,name,password_hash,role) VALUES('test','Test employee','unused','admin')");
  let sessionReady=false;
  const env={DB:{prepare,async batch(stmts){db.exec('BEGIN');try{const results=[];for(const s of stmts)results.push(await s.all());db.exec('COMMIT');return results;}catch(e){db.exec('ROLLBACK');throw e;}}}};
@@ -265,7 +266,7 @@ test('Retry and stale-write rejection do not create misleading attribution event
 
 test('Odoo captures every committed business table, rollback, actor and deletion without auth secrets',async()=>{
  const {db,req,seed}=setup();await seed();
- const ignored=['sessions','auth_limits','login_attempts','d1_migrations','sqlite_sequence','odoo_state','odoo_actor','odoo_outbox'];
+ const ignored=['sessions','auth_limits','login_attempts','d1_migrations','sqlite_sequence','odoo_state','odoo_actor','odoo_outbox','workspace_resets'];
  for(const {name} of db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().filter(r=>!ignored.includes(r.name))){
   assert.ok(db.prepare("SELECT 1 FROM sqlite_master WHERE type='trigger' AND name=?").get(`odoo_${name}_insert`),name);
  }
@@ -318,4 +319,28 @@ test('Odoo exports currency and image bytes losslessly, escapes HTML and retains
  const values=exportRow(row,'instance',{ODOO_COMPANY_ID:'3'});
  assert.equal(values[10],payload);assert.equal(values[8],'True');assert.ok(!values[11].includes('<script>'));assert.ok(values[11].includes('<img src="data:image/jpeg;'));
  assert.notEqual(values[0],exportRow({...row,record_key:'a_b'},'instance',{ODOO_COMPANY_ID:'3'})[0]);
+});
+
+test('Admin reset clears business data atomically, preserves accounts and syncs deletions; retries cannot erase new work',async()=>{
+ const {db,req,seed}=setup();await seed();await req('sales',sale());
+ await req('expenses',{request_id:crypto.randomUUID(),amount_cents:100,currency:'USD',details:'Test',paid_on:'2026-01-01'});
+ const request_id=crypto.randomUUID();
+ assert.equal((await req('admin/reset',{request_id,confirmation:'wrong'})).status,400);
+ db.exec("UPDATE users SET role='employee' WHERE id=1");assert.equal((await req('admin/reset',{request_id,confirmation:'مسح الكل'})).status,403);
+ db.exec("UPDATE users SET role='admin' WHERE id=1");
+ const before=db.prepare('SELECT COUNT(*) n FROM odoo_outbox').get().n;
+ db.exec("CREATE TRIGGER reset_failure BEFORE DELETE ON products BEGIN SELECT RAISE(ABORT,'test reset rollback'); END");
+ assert.equal((await req('admin/reset',{request_id,confirmation:'مسح الكل'})).status,500);
+ assert.equal(db.prepare('SELECT COUNT(*) n FROM odoo_outbox').get().n,before);
+ assert.equal(db.prepare('SELECT COUNT(*) n FROM sales').get().n,1);
+ db.exec('DROP TRIGGER reset_failure');
+ assert.equal((await req('admin/reset',{request_id,confirmation:'مسح الكل'})).status,200);
+ for(const table of ['products','warehouses','technicians','sales','stock','movements','stock_history','stock_transfers','warehouse_technicians','expenses','client_directory','product_images'])assert.equal(db.prepare(`SELECT COUNT(*) n FROM ${table}`).get().n,0,table);
+ assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n,1);
+ assert.equal(db.prepare('SELECT COUNT(*) n FROM activity').get().n,1);
+ assert.equal(db.prepare('SELECT path FROM activity').get().path,'/api/admin/reset');
+ assert.ok(db.prepare("SELECT COUNT(*) n FROM odoo_outbox WHERE action='delete'").get().n>0);
+ await req('products',{name:'New work',price_cents:100});
+ assert.equal((await req('admin/reset',{request_id,confirmation:'مسح الكل'})).status,200);
+ assert.equal(db.prepare('SELECT name FROM products').get().name,'New work');db.close();
 });

@@ -1,4 +1,11 @@
 export const messages = {
+data_admin:['إدارة البيانات','Data management'],
+data_admin_sub:['بدء مساحة عمل جديدة ومسح بيانات العمل السابقة.','Start a fresh workspace by clearing previous business data.'],
+reset_all:['مسح كل بيانات العمل','Clear all business data'],
+reset_scope:['يمسح المبيعات والمصاريف والعملاء والأجهزة والمستودعات والفنيين والمخزون وسجل العمليات السابق. تبقى حسابات الدخول وإعدادات الربط.','Clears sales, expenses, customers, devices, warehouses, technicians, stock and previous activity. Login accounts and integration settings remain.'],
+reset_odoo:['ينتقل الحذف تلقائياً إلى Odoo، فتختفي السجلات من قائمة البيانات الحالية. تبقى نسخ المراجعة في سجل تغييرات Odoo.','Deletions sync to Odoo and disappear from current records. Audit versions remain in Odoo change history.'],
+reset_warning:['لا يمكن التراجع من التطبيق. للتأكيد اكتب «مسح الكل» ثم اضغط زر المسح.','This cannot be undone in the app. Type “CLEAR ALL” and press the clear button to confirm.'],
+reset_confirmation:['عبارة التأكيد','Confirmation phrase'],
 odoo:['ربط Odoo','Odoo sync'],
 odoo_sub:['متابعة إرسال بيانات مدار إلى فرع سوريا.','Track delivery of Madar data to the Syria branch.'],
 sync_retry:['إعادة المحاولة الآن','Retry now'],

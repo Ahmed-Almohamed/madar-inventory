@@ -104,3 +104,7 @@ Each technician has a separate custody location by default. Workplace assignment
 Syria branch expenses record amount, USD/SYP currency, payment date, details and the authenticated employee. Totals are separate per currency. Expense creation is retry-safe. Successful business writes and their activity entries commit atomically. Sales details show the creating employee; historical records are explicitly unattributed. Activity records exclude passwords and image data. Employee IDs supplied by clients cannot override the authenticated actor.
 
 Odoo synchronization mirrors all business records and their changes to the Syria branch, with durable delivery, automatic retries and an admin status screen. This is a data mirror, not native accounting posting. See [Odoo synchronization](docs/ODOO-PLAN.md).
+
+## مسح بيانات العمل
+
+زر «مسح كل بيانات العمل» متاح للمدير في «إدارة البيانات». يلزم كتابة عبارة التأكيد. يحذف بيانات العمل والعهد والتعاريف وسجل النشاط السابق ضمن معاملة واحدة، ويبقي حسابات الدخول وإعدادات الربط وسجل تنفيذ المسح. طلب المسح له معرف ثابت: إعادة إرسال الطلب نفسه لا تمسح بيانات أضيفت لاحقاً. الحذف يرسل إلى Odoo، فتختفي السجلات من البيانات الحالية وتبقى نسخ المراجعة في سجل التغييرات. اختُبر المسح والتراجع عند الفشل على قاعدة اختبارات فقط؛ لم ننفّذ المسح على بيانات المستخدم.
