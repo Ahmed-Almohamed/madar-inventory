@@ -19,3 +19,6 @@ exports/
 *.zip
 .DS_Store
 Thumbs.db
+
+# Local screenshots can contain customer data.
+output/

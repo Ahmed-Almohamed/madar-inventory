@@ -2,17 +2,25 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {readFileSync} from 'node:fs';
+import {digest,hashPassword} from '../src/accounts.js';
 import worker from '../src/worker.js';
+import {drainOdoo,exportRow} from '../src/odoo.js';
 import {messages,translate} from '../public/i18n.js';
 const firstMigration=readFileSync(new URL('../migrations/0001_initial.sql',import.meta.url),'utf8');
 const secondMigration=readFileSync(new URL('../migrations/0002_technicians.sql',import.meta.url),'utf8');
-function setup(){
+function setup(custodyMigration=true){
  const db=new DatabaseSync(':memory:');db.exec('PRAGMA foreign_keys=ON');db.exec(firstMigration);db.exec(secondMigration);db.exec(readFileSync(new URL('../migrations/0003_warehouse_details.sql',import.meta.url),'utf8'));db.exec(readFileSync(new URL('../migrations/0004_product_images.sql',import.meta.url),'utf8'));db.exec(readFileSync(new URL('../migrations/0005_shipping_fee.sql',import.meta.url),'utf8'));db.exec(readFileSync(new URL('../migrations/0006_customers_sim_sale_edits.sql',import.meta.url),'utf8'));
- function prepare(sql){let args=[];const stmt=db.prepare(sql);return {bind(...v){args=v;return this;},async first(){return stmt.get(...args)||null;},async run(){const r=stmt.run(...args);return {meta:{changes:Number(r.changes),last_row_id:Number(r.lastInsertRowid)}};},async all(){return {results:stmt.all(...args)};}};}
+ function prepare(sql){let args=[];const stmt=db.prepare(sql);return {bind(...v){args=v;return this;},async first(){return stmt.get(...args)||null;},async run(){const r=stmt.run(...args);return {meta:{changes:Number(r.changes),last_row_id:Number(r.lastInsertRowid)}};},async all(){const results=stmt.all(...args);return {results,meta:{changes:Number(db.prepare("SELECT changes() n").get().n),last_row_id:Number(db.prepare("SELECT last_insert_rowid() n").get().n)}};}};}
  db.exec(readFileSync(new URL('../migrations/0007_stock_history.sql',import.meta.url),'utf8'));
  db.exec(readFileSync(new URL('../migrations/0008_client_directory.sql',import.meta.url),'utf8'));
+ if(custodyMigration)db.exec(readFileSync(new URL('../migrations/0009_technician_custody.sql',import.meta.url),'utf8'));
+ db.exec(readFileSync(new URL('../migrations/0010_accounts_expenses.sql',import.meta.url),'utf8'));
+ if(custodyMigration)db.exec(readFileSync(new URL('../migrations/0011_odoo_sync.sql',import.meta.url),'utf8'));
+ else db.exec('CREATE TABLE odoo_actor(id INTEGER PRIMARY KEY,name TEXT,operation TEXT); INSERT INTO odoo_actor(id) VALUES(1)');
+ db.exec("INSERT INTO users(username,name,password_hash,role) VALUES('test','Test employee','unused','admin')");
+ let sessionReady=false;
  const env={DB:{prepare,async batch(stmts){db.exec('BEGIN');try{const results=[];for(const s of stmts)results.push(await s.all());db.exec('COMMIT');return results;}catch(e){db.exec('ROLLBACK');throw e;}}}};
- const req=async(path,data,headers={})=>{const response=await worker.fetch(new Request('https://madar.test/api/'+path,{method:data?'POST':'GET',headers:{Origin:'https://madar.test','Content-Type':'application/json',...headers},...(data?{body:JSON.stringify(data)}:{})}),env);return {status:response.status,body:await response.json()};};
+ const req=async(path,data,headers={})=>{if(!sessionReady){db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(await digest('test-session'),1,Math.floor(Date.now()/1000)+3600);sessionReady=true;}const response=await worker.fetch(new Request('https://madar.test/api/'+path,{method:data?'POST':'GET',headers:{Cookie:'madar_session=test-session',Origin:'https://madar.test','Content-Type':'application/json',...headers},...(data?{body:JSON.stringify(data)}:{})}),env);return {status:response.status,body:await response.json()};};
  return {db,env,req,async seed(){await req('products',{name:'GT06N',price_cents:4500});await req('warehouses',{name:'Damascus',address:'',governorate:'دمشق',devices:[],technician_ids:[],request_id:crypto.randomUUID()});await req('warehouses',{name:'Aleppo',address:'',governorate:'حلب',devices:[],technician_ids:[],request_id:crypto.randomUUID()});await req('technicians',{name:'Installer',phone:'',warehouse_id:1,request_id:crypto.randomUUID()});await req('stock',{product_id:1,warehouse_id:1,quantity:10,request_id:crypto.randomUUID()});}};
 }
 const sale=()=>({request_id:crypto.randomUUID(),product_id:1,warehouse_id:1,quantity:3,price_cents:4550,customer:'Test customer',phone:'0999999999',address:'Damascus',source:'إنستغرام',sold_on:'2026-01-01',technician_id:1,installation_fee_cents:1500});
@@ -63,19 +71,19 @@ test('Report totals include every page and independent technicians retain instal
  assert.equal(first.items.length,25);assert.equal(second.items.length,2);assert.equal(first.total,27);assert.equal(first.summary.fees,40500);assert.deepEqual(first.summary,second.summary);
  db.close();
 });
-test('Direct access without login or secrets; cross-origin writes are still rejected',async()=>{const {req,db}=setup();assert.equal((await req('overview')).status,200);assert.equal((await req('products',{name:'Device',price_cents:1000},{Origin:'https://other.test'})).status,403);assert.equal((await req('login',{})).status,404);db.close();});
+test('Authenticated access works; cross-origin writes are rejected',async()=>{const {req,db}=setup();assert.equal((await req('overview')).status,200);assert.equal((await req('products',{name:'Device',price_cents:1000},{Origin:'https://other.test'})).status,403);assert.equal((await req('login',{})).status,404);db.close();});
 test('Products require only name and price; inventory API hides retired fields',async()=>{const {req,db}=setup();assert.equal((await req('products',{name:'Tracker',price_cents:2500})).status,201);const p=(await req('overview')).body.products[0];assert.deepEqual(Object.keys(p).sort(),['has_image','id','name','price_cents']);db.close();});
 test('Sale records technician and fee, deducts exact stock and is retry-safe',async()=>{const {req,seed,db}=setup();await seed();const d=sale();assert.equal((await req('sales',d)).status,201);assert.equal((await req('sales',d)).status,200);assert.equal(db.prepare('SELECT quantity FROM stock').get().quantity,7);assert.equal(db.prepare('SELECT count(*) n FROM sales').get().n,1);const row=(await req('sales')).body.items[0];assert.equal(row.technician,'Installer');assert.equal(row.installation_fee_cents,1500);db.close();});
 test('Overselling and sales from an empty warehouse are rolled back',async()=>{const {req,seed,db}=setup();await seed();assert.equal((await req('sales',{...sale(),quantity:11})).status,409);assert.equal((await req('sales',{...sale(),warehouse_id:2})).status,409);assert.equal(db.prepare('SELECT quantity FROM stock').get().quantity,10);assert.equal(db.prepare('SELECT count(*) n FROM sales').get().n,0);db.close();});
 test('Competing purchases cannot consume the same stock twice',async()=>{const {req,seed,db}=setup();await seed();const r=await Promise.all([req('sales',{...sale(),quantity:8}),req('sales',{...sale(),quantity:8})]);assert.deepEqual(r.map(x=>x.status).sort(),[201,409]);assert.equal(db.prepare('SELECT quantity FROM stock').get().quantity,2);db.close();});
 test('Cancellation restores stock once and excludes device revenue and installation fees',async()=>{const {req,seed,db}=setup();await seed();const day=(await req('overview')).body.today;await req('sales',{...sale(),sold_on:day});let summary=(await req('overview')).body.summary;assert.equal(summary.revenue,13650);assert.equal(summary.installation_fees,1500);assert.equal((await req('sales/1/cancel',{})).status,200);assert.equal((await req('sales/1/cancel',{})).status,409);assert.equal(db.prepare('SELECT quantity FROM stock').get().quantity,10);summary=(await req('overview')).body.summary;assert.equal(summary.revenue,0);assert.equal(summary.installation_fees,0);db.close();});
 test('Add stock needs no note, is retry-safe and rejects nonpositive quantities',async()=>{const {req,seed,db}=setup();await seed();const d={product_id:1,warehouse_id:1,quantity:4,request_id:crypto.randomUUID()};assert.equal((await req('stock',d)).status,201);assert.equal((await req('stock',d)).status,200);assert.equal(db.prepare('SELECT quantity FROM stock').get().quantity,14);for(const quantity of [-1,0,1.5])assert.equal((await req('stock',{...d,quantity,request_id:crypto.randomUUID()})).status,400);db.close();});
-test('Create technician with their own warehouse atomically; stock and sale use same warehouse',async()=>{const {req,db}=setup();await req('products',{name:'Device',price_cents:5000});const tech={name:'Mobile technician',create_warehouse:true,governorate:'دمشق',request_id:crypto.randomUUID()};assert.equal((await req('technicians',tech)).status,201);assert.equal((await req('technicians',tech)).status,200);const overview=(await req('overview')).body;assert.equal(overview.warehouses.length,1);assert.equal(overview.technicians[0].warehouse_id,overview.warehouses[0].id);await req('stock',{product_id:1,warehouse_id:1,quantity:2,request_id:crypto.randomUUID()});assert.equal((await req('sales',{...sale(),quantity:1})).status,201);assert.equal(db.prepare('SELECT quantity FROM stock').get().quantity,1);db.close();});
-test('Independent technician and existing warehouse link work without duplicating stock',async()=>{const {req,seed,db}=setup();await seed();assert.equal((await req('technicians',{name:'Independent',request_id:crypto.randomUUID()})).status,201);assert.equal((await req('technicians',{name:'Shared location',warehouse_id:1,request_id:crypto.randomUUID()})).status,201);const data=(await req('overview')).body;assert.equal(data.technicians.find(x=>x.name==='Independent').warehouse_id,null);assert.equal(data.warehouses.length,2);assert.equal(data.stock.length,1);db.close();});
+test('Create technician with their own warehouse atomically; stock and sale use same warehouse',async()=>{const {req,db}=setup();await req('products',{name:'Device',price_cents:5000});const tech={name:'Mobile technician',create_warehouse:true,governorate:'دمشق',request_id:crypto.randomUUID()};assert.equal((await req('technicians',tech)).status,201);assert.equal((await req('technicians',tech)).status,200);const overview=(await req('overview')).body;assert.equal(overview.warehouses.filter(w=>!w.custody_owner_id).length,1);assert.equal(overview.technicians[0].warehouse_id,overview.warehouses.find(w=>!w.custody_owner_id).id);await req('stock',{product_id:1,warehouse_id:1,quantity:2,request_id:crypto.randomUUID()});assert.equal((await req('sales',{...sale(),quantity:1})).status,201);assert.equal(db.prepare('SELECT quantity FROM stock').get().quantity,1);db.close();});
+test('Independent technician and existing warehouse link work without duplicating stock',async()=>{const {req,seed,db}=setup();await seed();assert.equal((await req('technicians',{name:'Independent',request_id:crypto.randomUUID()})).status,201);assert.equal((await req('technicians',{name:'Shared location',warehouse_id:1,request_id:crypto.randomUUID()})).status,201);const data=(await req('overview')).body;assert.equal(data.technicians.find(x=>x.name==='Independent').warehouse_id,null);assert.equal(data.warehouses.filter(w=>!w.custody_owner_id).length,2);assert.equal(data.stock.length,1);db.close();});
 test('Invalid technician and invalid fees cannot create a sale or change stock',async()=>{const {req,seed,db}=setup();await seed();for(const patch of [{technician_id:null},{installation_fee_cents:-1},{installation_fee_cents:1.5},{quantity:1.5},{price_cents:-1},{source:'bad'},{sold_on:'2026-02-30'},{sold_on:'9999-01-01'},{phone:'abc'}])assert.equal((await req('sales',{...sale(),...patch})).status,400,JSON.stringify(patch));assert.equal((await req('sales',{...sale(),technician_id:999})).status,400);assert.equal(db.prepare('SELECT quantity FROM stock').get().quantity,10);db.close();});
 test('Search supports technician, customer and source filters',async()=>{const {req,seed,db}=setup();await seed();await req('sales',sale());assert.equal((await req('sales?q=Installer')).body.total,1);assert.equal((await req('sales?q=customer')).body.total,1);assert.equal((await req('sales?source='+encodeURIComponent('فيسبوك'))).body.total,0);assert.equal((await req('sales?page=2')).body.items.length,0);db.close();});
 test('Upgrade preserves existing sales and inventory with no fabricated technician',()=>{const db=new DatabaseSync(':memory:');db.exec('PRAGMA foreign_keys=ON');db.exec(firstMigration);db.exec(`INSERT INTO products(name,sku,price_cents) VALUES('Old device','OLD',4500); INSERT INTO warehouses(name) VALUES('Old warehouse'); INSERT INTO stock VALUES(1,1,10); INSERT INTO sales(request_id,product_id,warehouse_id,quantity,price_cents,phone,address,source,sold_on) VALUES('legacy-sale',1,1,2,4500,'0999999999','Damascus','توصية','2026-01-01');`);db.exec(secondMigration);assert.equal(db.prepare('SELECT quantity FROM stock').get().quantity,8);const s=db.prepare('SELECT * FROM sales').get();assert.equal(s.technician_id,null);assert.equal(s.installation_fee_cents,0);assert.equal(s.price_cents,4500);db.close();});
-test('Every translation has Arabic and English; retired wording is absent from current UI',()=>{for(const [key,pair]of Object.entries(messages)){assert.equal(pair.length,2,key);assert.ok(pair.every(s=>typeof s==='string'&&s.length),key);assert.doesNotMatch(pair[0],/مبيعة/);assert.doesNotMatch(pair[1],/[\u0600-\u06ff]/,key);}assert.equal(translate('en','stock_at',{count:4}),'Available in this warehouse: 4');const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');for(const match of source.matchAll(/\bt\('([^']+)'/g)){if(match[1]!=='error_')assert.ok(messages[match[1]],match[1]);}assert.doesNotMatch(source,/showLogin|low_stock|\bsku\b|مبيعة/);});
+test('Every translation has Arabic and English; retired wording is absent from current UI',()=>{for(const [key,pair]of Object.entries(messages)){assert.equal(pair.length,2,key);assert.ok(pair.every(s=>typeof s==='string'&&s.length),key);assert.doesNotMatch(pair[0],/مبيعة/);assert.doesNotMatch(pair[1],/[\u0600-\u06ff]/,key);}assert.equal(translate('en','stock_at',{count:4}),'Available in this warehouse: 4');const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');for(const match of source.matchAll(/\bt\('([^']+)'/g)){if(match[1]!=='error_')assert.ok(messages[match[1]],match[1]);}assert.doesNotMatch(source,/low_stock|\bsku\b|مبيعة/);});
 
 test('Warehouse creation saves governorate, several device quantities and shared technician access once',async()=>{
  const {req,seed,db}=setup();await seed();await req('products',{name:'Second',price_cents:1000});
@@ -88,7 +96,7 @@ test('Warehouse creation saves governorate, several device quantities and shared
 test('Warehouse creation is atomic for invalid devices and technicians',async()=>{
  const {req,seed,db}=setup();await seed();
  const base={name:'Invalid warehouse',governorate:'دمشق',devices:[{product_id:1,quantity:5}],technician_ids:[999],request_id:crypto.randomUUID()};
- assert.equal((await req('warehouses',base)).status,400);assert.equal(db.prepare('SELECT COUNT(*) n FROM warehouses').get().n,2);assert.equal(db.prepare('SELECT SUM(quantity) n FROM stock').get().n,10);
+ assert.equal((await req('warehouses',base)).status,400);assert.equal(db.prepare('SELECT COUNT(*) n FROM warehouses WHERE custody_owner_id IS NULL').get().n,2);assert.equal(db.prepare('SELECT SUM(quantity) n FROM stock').get().n,10);
  assert.equal((await req('warehouses',{...base,technician_ids:[],devices:[{product_id:999,quantity:1}]})).status,400);
  assert.equal((await req('warehouses',{...base,governorate:'invalid'})).status,400);db.close();
 });
@@ -100,7 +108,7 @@ test('Updating warehouse access does not change stock or access to other warehou
 });
 
 test('Invalid image uploads do not leave partial products',async()=>{const {req,db}=setup();for(const image of ['data:image/svg+xml;base64,PHN2Zz4=', 'https://example.com/image.jpg','data:image/jpeg;base64,YWJjZA==']){assert.equal((await req('products',{name:'Bad image',price_cents:100,image})).status,400);}assert.equal(db.prepare('SELECT COUNT(*) n FROM products').get().n,0);db.close();});
-test('Photo is stored separately and served as an image without bloating overview',async()=>{const {req,env,db}=setup();const image='data:image/jpeg;base64,/9j/2Q==';assert.equal((await req('products',{name:'Photo device',price_cents:100,image})).status,201);const p=(await req('overview')).body.products[0];assert.equal(p.has_image,1);assert.equal(p.image,undefined);const response=await worker.fetch(new Request('https://madar.test/api/products/1/image'),env);assert.equal(response.status,200);assert.equal(response.headers.get('Content-Type'),'image/jpeg');assert.equal((await response.arrayBuffer()).byteLength,4);db.close();});
+test('Photo is stored separately and served as an image without bloating overview',async()=>{const {req,env,db}=setup();const image='data:image/jpeg;base64,/9j/2Q==';assert.equal((await req('products',{name:'Photo device',price_cents:100,image})).status,201);const p=(await req('overview')).body.products[0];assert.equal(p.has_image,1);assert.equal(p.image,undefined);const response=await worker.fetch(new Request('https://madar.test/api/products/1/image',{headers:{Cookie:'madar_session=test-session'}}),env);assert.equal(response.status,200);assert.equal(response.headers.get('Content-Type'),'image/jpeg');assert.equal((await response.arrayBuffer()).byteLength,4);db.close();});
 
 test('Shipping is optional, validated, preserved on retry and separate from device and installer amounts',async()=>{const {req,seed,db}=setup();await seed();const d={...sale(),shipping_fee_cents:725,technician_id:null,installation_fee_cents:0};assert.equal((await req('sales',d)).status,201);assert.equal((await req('sales',d)).status,200);let rows=(await req('sales')).body.items;assert.equal(rows[0].shipping_fee_cents,725);assert.equal(rows[0].price_cents,4550);assert.equal(rows[0].installation_fee_cents,0);for(const value of [-1,1.5,100000001,'5'])assert.equal((await req('sales',{...sale(),shipping_fee_cents:value})).status,400);assert.equal((await req('sales',sale())).status,201);rows=(await req('sales')).body.items;assert.equal(rows[0].shipping_fee_cents,0);assert.equal(db.prepare('SELECT quantity FROM stock').get().quantity,4);await req('sales/1/cancel',{});assert.equal((await req('sales')).body.items.find(x=>x.id===1).shipping_fee_cents,725);db.close();});
 
@@ -182,4 +190,132 @@ test('Independent customer directory supports categories, nullable prices, searc
  list=(await req('clients?category=wholesale')).body;assert.equal(list.items[0].price_cents,null);assert.equal(list.items[0].quantity,null);
  assert.equal((await req('clients',{...d,category:'invalid'})).status,400);
  assert.equal(db.prepare('SELECT COUNT(*) n FROM sales').get().n,0);assert.equal(db.prepare('SELECT quantity FROM stock WHERE warehouse_id=1').get().quantity,10);
+});
+
+test('Technician custody is independent of assigned office; transfers conserve stock and retry safely',async()=>{
+ const {req,seed,db}=setup();await seed();const tech=(await req('overview')).body.technicians[0],custody=tech.custody_warehouse_id;
+ assert.notEqual(custody,1);assert.equal(tech.stock_warehouse_id,null);
+ const transfer={request_id:crypto.randomUUID(),product_id:1,from_warehouse_id:1,to_warehouse_id:custody,quantity:4};
+ assert.equal((await req('stock/transfer',transfer)).status,200);assert.equal((await req('stock/transfer',transfer)).status,200);
+ const balance=id=>db.prepare('SELECT quantity FROM stock WHERE product_id=1 AND warehouse_id=?').get(id)?.quantity||0;
+ assert.equal(balance(1),6);assert.equal(balance(custody),4);
+ assert.equal((await req('stock/edit',{product_id:1,warehouse_id:custody,quantity:3,expected_quantity:4,request_id:crypto.randomUUID()})).status,200);assert.equal(balance(1),6);
+ assert.equal((await req('stock/transfer',{...transfer,quantity:99,request_id:crypto.randomUUID()})).status,409);assert.equal(balance(1),6);assert.equal(balance(custody),3);
+ assert.equal((await req('stock/transfer',{...transfer,to_warehouse_id:999,request_id:crypto.randomUUID()})).status,400);assert.equal(balance(1),6);
+ assert.equal((await req('technicians/1/stock-mode',{warehouse_id:1})).status,409);
+ assert.equal((await req('sales',{...sale(),warehouse_id:custody,quantity:1})).status,201);assert.equal(balance(custody),2);assert.equal(balance(1),6);
+ await req('sales/1/cancel',{});assert.equal(balance(custody),3);assert.equal(balance(1),6);
+ await req('stock/transfer',{...transfer,from_warehouse_id:custody,to_warehouse_id:1,quantity:3,request_id:crypto.randomUUID()});
+ assert.equal((await req('technicians/1/stock-mode',{warehouse_id:1})).status,200);
+ assert.equal((await req('technicians/1/edit',{name:'Installer',phone:'',warehouse_ids:[2]})).status,200);
+ assert.equal((await req('overview')).body.technicians[0].stock_warehouse_id,1);
+ assert.equal((await req('technicians/1/stock-mode',{warehouse_id:null})).status,200);assert.equal(balance(1),9);db.close();
+});
+
+test('Custody migration preserves existing stock, sales and work assignments without copying quantities',async()=>{
+ const {req,seed,db}=setup(false);await seed();await req('sales',sale());
+ db.exec(readFileSync(new URL('../migrations/0009_technician_custody.sql',import.meta.url),'utf8'));
+ const data=(await req('overview')).body,tech=data.technicians[0];
+ assert.equal(data.stock.reduce((n,s)=>n+s.quantity,0),7);assert.equal(data.stock.find(s=>s.warehouse_id===1).quantity,7);
+ assert.equal(data.stock.some(s=>s.warehouse_id===tech.custody_warehouse_id),false);
+ assert.equal(data.warehouse_technicians[0].warehouse_id,1);assert.equal((await req('sales')).body.items[0].warehouse_id,1);db.close();
+});
+
+async function authRequest(env,path,data,cookie=''){
+ return worker.fetch(new Request('https://madar.test/api/'+path,{method:data?'POST':'GET',headers:{Origin:'https://madar.test','Content-Type':'application/json',Cookie:cookie},...(data?{body:JSON.stringify(data)}:{})}),env);
+}
+test('Login protects all business endpoints, rotates sessions and logout revokes access',async()=>{
+ const {db,env}=setup();db.prepare('UPDATE users SET password_hash=? WHERE id=1').run(await hashPassword('test-only-password'));
+ for(const path of ['overview','sales','expenses','activity','users','products/1/image'])assert.equal((await authRequest(env,path)).status,401);
+ assert.equal((await authRequest(env,'auth/login',{username:'test',password:'wrong-password'})).status,401);
+ const response=await authRequest(env,'auth/login',{username:'test',password:'test-only-password'});assert.equal(response.status,200);const cookie=response.headers.get('set-cookie').split(';')[0];assert.match(response.headers.get('set-cookie'),/HttpOnly; SameSite=Strict/);assert.match(response.headers.get('set-cookie'),/Secure/);
+ assert.equal((await authRequest(env,'overview',null,cookie)).status,200);await authRequest(env,'auth/logout',{},cookie);assert.equal((await authRequest(env,'overview',null,cookie)).status,401);db.close();
+});
+test('Employee expenses are attributed by session; employee cannot create users or forge the actor',async()=>{
+ const {db,env,req}=setup();await req('users',{name:'Employee One',username:'employee1',password:'employee-password'});const u=db.prepare("SELECT * FROM users WHERE username='employee1'").get();assert.notEqual(u.password_hash,'employee-password');
+ const login=await authRequest(env,'auth/login',{username:'employee1',password:'employee-password'}),cookie=login.headers.get('set-cookie').split(';')[0];
+ assert.equal((await authRequest(env,'users',null,cookie)).status,403);assert.equal((await authRequest(env,'users',{name:'Bad',username:'bad-user',password:'bad-password'},cookie)).status,403);
+ const expense={request_id:crypto.randomUUID(),amount_cents:1250,currency:'USD',details:'Office supplies',paid_on:'2026-10-31',created_by:1};
+ assert.equal((await authRequest(env,'expenses',expense,cookie)).status,201);assert.equal((await authRequest(env,'expenses',expense,cookie)).status,201);
+ assert.equal(db.prepare('SELECT COUNT(*) n FROM expenses').get().n,1);assert.equal(db.prepare('SELECT created_by FROM expenses').get().created_by,u.id);
+ const activity=db.prepare("SELECT * FROM activity WHERE path='/api/expenses'").get();assert.equal(activity.actor_id,u.id);assert.doesNotMatch(JSON.stringify(db.prepare('SELECT * FROM activity').all()),/employee-password|password_hash/);
+ assert.equal((await req('users/'+u.id+'/edit',{active:false,password:''})).status,200);assert.equal((await authRequest(env,'expenses',null,cookie)).status,401);db.close();
+});
+test('Failed writes roll back attribution; expense currencies stay separate and malformed amounts are rejected',async()=>{
+ const {db,req,seed}=setup();await seed();const before=db.prepare('SELECT COUNT(*) n FROM activity').get().n;
+ assert.equal((await req('sales',{...sale(),quantity:999})).status,409);assert.equal(db.prepare('SELECT COUNT(*) n FROM activity').get().n,before);
+ for(const [currency,amount] of [['USD',100],['SYP',50000]])await req('expenses',{request_id:crypto.randomUUID(),amount_cents:amount,currency,details:'Test',paid_on:'2026-10-31'});
+ assert.equal((await req('expenses')).body.totals.length,2);
+ assert.equal((await req('expenses',{request_id:crypto.randomUUID(),amount_cents:-1,currency:'USD',details:'Test',paid_on:'2026-10-31'})).status,400);
+ assert.equal((await req('expenses',{request_id:crypto.randomUUID(),amount_cents:1,currency:'USD',details:'Test',paid_on:'2026-02-30'})).status,400);db.close();
+});
+test('Login rate limit is enforced and expired sessions are denied',async()=>{
+ const {db,env,req}=setup();for(let i=0;i<10;i++)assert.equal((await authRequest(env,'auth/login',{username:'missing',password:'wrong-password'})).status,401);
+ assert.equal((await authRequest(env,'auth/login',{username:'missing',password:'wrong-password'})).status,429);
+ await req('overview');db.exec('UPDATE sessions SET expires_at=0');assert.equal((await authRequest(env,'overview',null,'madar_session=test-session')).status,401);db.close();
+});
+
+test('Retry and stale-write rejection do not create misleading attribution events',async()=>{
+ const {db,req,seed}=setup();await seed();await req('sales',sale());
+ const update={...sale(),revision:1,quantity:2};await req('sales/1/edit',update);const before=db.prepare('SELECT COUNT(*) n FROM activity').get().n;
+ assert.equal((await req('sales/1/edit',update)).status,409);assert.equal(db.prepare('SELECT COUNT(*) n FROM activity').get().n,before);
+ const expense={request_id:crypto.randomUUID(),amount_cents:100,currency:'USD',details:'One expense',paid_on:'2026-10-31'};await req('expenses',expense);await req('expenses',expense);
+ assert.equal(db.prepare("SELECT COUNT(*) n FROM activity WHERE path='/api/expenses'").get().n,1);db.close();
+});
+
+test('Odoo captures every committed business table, rollback, actor and deletion without auth secrets',async()=>{
+ const {db,req,seed}=setup();await seed();
+ const ignored=['sessions','auth_limits','login_attempts','d1_migrations','sqlite_sequence','odoo_state','odoo_actor','odoo_outbox'];
+ for(const {name} of db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().filter(r=>!ignored.includes(r.name))){
+  assert.ok(db.prepare("SELECT 1 FROM sqlite_master WHERE type='trigger' AND name=?").get(`odoo_${name}_insert`),name);
+ }
+ assert.equal(db.prepare("SELECT actor FROM odoo_outbox WHERE entity='products' ORDER BY id DESC LIMIT 1").get().actor,'Test employee');
+ const count=db.prepare('SELECT COUNT(*) n FROM odoo_outbox').get().n;
+ assert.equal((await req('sales',{...sale(),quantity:999})).status,409);
+ assert.equal(db.prepare('SELECT COUNT(*) n FROM odoo_outbox').get().n,count);
+ await req('sales',sale());await req('sales/1/cancel',{});
+ assert.ok(JSON.parse(db.prepare("SELECT payload FROM odoo_outbox WHERE entity='sales' ORDER BY id DESC LIMIT 1").get().payload).cancelled_at);
+ db.exec("UPDATE users SET password_hash='must-never-export' WHERE id=1");
+ assert.ok(!db.prepare('SELECT payload FROM odoo_outbox').all().some(r=>/password_hash|must-never-export/.test(r.payload)));
+ db.exec('DELETE FROM warehouse_technicians');
+ assert.equal(db.prepare('SELECT name FROM odoo_actor WHERE id=1').get().name,null);db.close();
+});
+
+test('Odoo delivery is idempotent after partial delivery, ordered and guarded by a lease',async()=>{
+ const {db,env,req}=setup();await req('products',{name:'Test <script>',price_cents:1250});
+ Object.assign(env,{ODOO_ENABLED:'true',ODOO_URL:'https://odoo.test',ODOO_API_KEY:'test-secret',ODOO_COMPANY_ID:'3'});
+ const original=globalThis.fetch,remote=new Map();let failOnce=true,calls=0;
+ globalThis.fetch=async(url,options)=>{
+  calls++;const body=JSON.parse(options.body);assert.deepEqual(body.context.allowed_company_ids,[3]);
+  for(const row of body.data){assert.ok(!row.join('').includes('test-secret'));remote.set(row[0],row);}
+  if(url.includes('x_madar_event')&&failOnce){failOnce=false;throw Error('test connection lost after commit');}
+  return Response.json({ids:body.data.map((_,i)=>i+1),messages:[]});
+ };
+ try{
+  let r=await drainOdoo(env);assert.equal(r.error,'odoo_connection_failed');
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM odoo_outbox WHERE delivered_at IS NOT NULL').get().n,0);
+  const before=calls;await drainOdoo(env);assert.equal(calls,before,'backoff respected');
+  db.exec('UPDATE odoo_outbox SET next_attempt=0');
+  const expected=db.prepare('SELECT COUNT(*) n FROM odoo_outbox').get().n;
+  r=await drainOdoo(env);assert.equal(r.delivered,expected);
+  assert.equal([...remote.keys()].filter(x=>x.includes('_event_')).length,expected);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM odoo_outbox WHERE delivered_at IS NULL').get().n,0);
+  db.exec('UPDATE odoo_state SET lease_until=9999999999');assert.equal((await drainOdoo(env)).busy,true);
+ }finally{globalThis.fetch=original;db.close();}
+});
+
+test('Odoo import rejection never acknowledges events; sync endpoints require admin',async()=>{
+ const {db,env,req}=setup();await req('products',{name:'Device',price_cents:1});
+ Object.assign(env,{ODOO_ENABLED:'true',ODOO_URL:'https://odoo.test',ODOO_API_KEY:'secret',ODOO_COMPANY_ID:'3'});
+ const original=globalThis.fetch;globalThis.fetch=async()=>Response.json({ids:false,messages:[{type:'error',message:'private business data'}]});
+ try{assert.equal((await drainOdoo(env)).error,'odoo_import_rejected');assert.equal(db.prepare('SELECT COUNT(*) n FROM odoo_outbox WHERE delivered_at IS NOT NULL').get().n,0);assert.ok(!JSON.stringify((await req('odoo/status')).body).includes('private business data'));}finally{globalThis.fetch=original;}
+ db.exec("UPDATE users SET role='employee' WHERE id=1");assert.equal((await req('odoo/status')).status,403);assert.equal((await req('odoo/retry',{})).status,403);db.close();
+});
+
+test('Odoo exports currency and image bytes losslessly, escapes HTML and retains deleted state',()=>{
+ const payload=JSON.stringify({details:'<script>alert(1)</script>',amount_cents:25000,currency:'SYP',data_url:'data:image/jpeg;base64,/9j/2Q=='});
+ const row={id:5,entity:'expenses',record_key:'a:b',payload,action:'delete',created_at:'2026-11-01 12:00:00',actor:'Syos'};
+ const values=exportRow(row,'instance',{ODOO_COMPANY_ID:'3'});
+ assert.equal(values[10],payload);assert.equal(values[8],'True');assert.ok(!values[11].includes('<script>'));assert.ok(values[11].includes('<img src="data:image/jpeg;'));
+ assert.notEqual(values[0],exportRow({...row,record_key:'a_b'},'instance',{ODOO_COMPANY_ID:'3'})[0]);
 });

@@ -19,7 +19,7 @@ npm run build
 npm run deploy
 ```
 
-Wrangler prints the deployed URL. The app has no built-in login: anyone with access to that URL can read and change its data. Repository visibility does not control app access.
+Wrangler prints the deployed URL. All data APIs require login. Provision the first administrator after migration 0010 and before deploying the authenticated version. Run scripts/provision-admin.mjs with username/password JSON on stdin, then execute backups/admin-bootstrap.sql using Wrangler against the intended database. Never commit that file. Employee accounts are then managed inside the app.
 
 ## Updating an existing installation
 
@@ -43,6 +43,13 @@ Keep production and local data separate. The `dev` and `db:local` scripts use `w
 | `0006` | SIM codes, sale revisions, and stock reconciliation for sale edits |
 | `0007` | Stock history with before/after quantities |
 | `0008` | Independent customer directory and business categories |
+| `0009` | Independent technician custody and atomic transfers |
+| `0010` | Accounts, sessions, employee activity and Syria expenses |
+| `0011` | Atomic Odoo outbox, initial snapshot and per-table change capture |
+
+## Odoo secret
+
+Set `ODOO_API_KEY` using `wrangler secret put ODOO_API_KEY` with the key on standard input, never in command arguments or source. The production configuration enables immediate delivery and a one-minute retry cron. Local configuration leaves delivery disabled. See [Odoo synchronization](ODOO-PLAN.md) for scope, permissions, retry behavior and recovery.
 
 Do not delete or rewrite applied migrations. Add a new migration for future schema changes.
 

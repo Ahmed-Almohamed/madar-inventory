@@ -15,7 +15,7 @@
 
 Madar keeps device sales, warehouse quantities, customers, and installation technicians in one place. Built for a small team selling GPS trackers, with an Arabic/English interface that works on phones and desktops.
 
-The main navigation has two areas: **Customers** and **Goods**. The customer directory groups car rental businesses, accessories shops, and wholesalers. Each record stores a city, phone, details, price, quantity, and notes independently of sales and stock. Sales and purchase history remain available under Customers; warehouses and technicians remain under Goods.
+The app opens on **Overview**, with current-month sales metrics, current stock, recent sales and warehouse distribution. The sidebar separates **Sales**, **Customers**, **Devices**, **Warehouses**, **Technicians**, and **Reports**. Customers contains a searchable directory and a separate purchase-history tab. Directory details and notes are available through each row's details action; these records remain independent of sales and stock. Reports links to the existing sales, purchase, technician and stock-history views.
 
 ## 📦 What it does
 
@@ -38,7 +38,7 @@ npm run db:local
 npm run dev
 ```
 
-Open [localhost:8787](http://127.0.0.1:8787). A fresh database starts empty: add a device, create a warehouse with stock, then record a sale. Local development does not require a secrets file.
+Open [localhost:8787](http://127.0.0.1:8787). A fresh database starts empty: add a device, create a warehouse with stock, then record a sale. After applying migrations, provision an initial administrator with scripts/provision-admin.mjs (JSON on stdin), then execute the generated ignored backups/admin-bootstrap.sql against the chosen database. Passwords and generated SQL must never be committed. Existing usernames are not overwritten.
 
 ## 🛠 Development
 
@@ -77,7 +77,7 @@ npm run db:remote
 npm run deploy
 ```
 
-**Access model:** this is a single-business workspace with no built-in login. Anyone who can reach the deployed app can read and edit its data. Technician-to-warehouse links organize records; they are not access permissions. A private GitHub repository does not restrict the deployed app.
+**Access model:** every API route, including product images, requires an active session. Administrators create employee accounts and can disable them or reset their passwords. Employees can operate the shared business workspace but cannot manage accounts. Sessions expire after 12 hours, use HttpOnly/SameSite cookies, and are revoked when an employee account changes. Passwords use salted PBKDF2-SHA256 hashes. Login attempts are rate-limited.
 
 ## 📝 How records work
 
@@ -94,3 +94,13 @@ npm run deploy
 Built by **[Sy0s](https://github.com/Ahmed-Almohamed)**.
 
 Font licenses are included in [Cairo](public/CAIRO-LICENSE.txt), [Inter](public/INTER-LICENSE.txt), and [FONT-LICENSE.txt](public/FONT-LICENSE.txt). No open-source license has been assigned to the application code.
+
+## Technician stock
+
+Each technician has a separate custody location by default. Workplace assignments do not share balances. An explicit stock-mode setting can make a technician use the same balance as a regular warehouse. New personal locations start empty; migration 0009 preserves existing quantities and sales at their original locations. Transfer stock to custody as needed. Transfers are atomic, reject insufficient balances and are safe to retry. Sales deduct from the explicitly selected stock source, independently of the installer. A nonempty personal balance must be transferred before switching to shared mode; later returns to a previous personal location remain visible.
+
+## Expenses and accountability
+
+Syria branch expenses record amount, USD/SYP currency, payment date, details and the authenticated employee. Totals are separate per currency. Expense creation is retry-safe. Successful business writes and their activity entries commit atomically. Sales details show the creating employee; historical records are explicitly unattributed. Activity records exclude passwords and image data. Employee IDs supplied by clients cannot override the authenticated actor.
+
+Odoo synchronization mirrors all business records and their changes to the Syria branch, with durable delivery, automatic retries and an admin status screen. This is a data mirror, not native accounting posting. See [Odoo synchronization](docs/ODOO-PLAN.md).

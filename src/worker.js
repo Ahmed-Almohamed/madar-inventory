@@ -1,3 +1,5 @@
+import {authenticate,auditedDB,accountApi} from './accounts.js';
+import {drainOdoo,odooApi} from './odoo.js';
 // Source values remain compatible with existing records.
 const GOVERNORATES=['دمشق','ريف دمشق','حلب','حمص','حماة','اللاذقية','طرطوس','إدلب','درعا','السويداء','القنيطرة','دير الزور','الرقة','الحسكة'];
 const SOURCES=['إنستغرام','فيسبوك','توصية','تسويق ميداني','أخرى'];
@@ -22,11 +24,12 @@ function saleValues(d){
  if(sim&&!/^[A-Z0-9-]+$/.test(sim))fail('invalid_field',400,'sim_code');
  return [integer(d.product_id,'device'),integer(d.warehouse_id,'warehouse'),integer(d.quantity,'quantity'),integer(d.price_cents,'unit_price',0,100000000),str(d.customer||'','customer',200,false),phone,str(d.address,'address',500),d.source,str(d.notes||'','notes',1000,false),soldOn,tech,fee,integer(d.shipping_fee_cents??0,'shipping_fee',0,100000000),sim];
 }
-async function api(req,env){
+async function api(req,env,user){
  const url=new URL(req.url),path=url.pathname,method=req.method,db=env.DB;
  if(!['GET','POST'].includes(method))fail('method_not_allowed',405);
- // No application sign-in. Cross-origin write protection remains enabled.
+ // Same-origin protection also applies to authenticated writes.
  if(method!=='GET'&&req.headers.get('Origin')!==url.origin)fail('origin_not_allowed',403);
+ const accountResponse=await accountApi(req,db,user);if(accountResponse)return accountResponse;
  if(path==='/api/clients'&&method==='GET'){
   const category=url.searchParams.get('category')||'',q=(url.searchParams.get('q')||'').slice(0,100),page=integer(Number(url.searchParams.get('page')||1),'quantity');
   if(category&&!['rental','accessories','wholesale'].includes(category))fail('invalid_request');
@@ -56,7 +59,7 @@ async function api(req,env){
    db.prepare(`SELECT COUNT(*) count,COALESCE(SUM(quantity),0) units,COALESCE(SUM(quantity*price_cents),0) revenue,COALESCE(SUM(installation_fee_cents),0) installation_fees FROM sales WHERE cancelled_at IS NULL AND sold_on BETWEEN ? AND ?`).bind(month,day),
    db.prepare('SELECT t.*,w.name warehouse FROM technicians t LEFT JOIN warehouses w ON w.id=t.warehouse_id ORDER BY t.name'),db.prepare('SELECT * FROM warehouse_technicians')
   ]);
-  return json({products:r[0].results,warehouses:r[1].results,stock:r[2].results,summary:r[3].results[0],technicians:r[4].results,warehouse_technicians:r[5].results,today:day});
+  return json({products:r[0].results,warehouses:r[1].results,stock:r[2].results,user,summary:r[3].results[0],technicians:r[4].results,warehouse_technicians:r[5].results,today:day});
  }
  if(/^\/api\/products\/\d+\/image$/.test(path)&&method==='GET'){
   const row=await db.prepare('SELECT data_url FROM product_images WHERE product_id=?').bind(Number(path.split('/')[3])).first();
@@ -114,7 +117,7 @@ async function api(req,env){
   if(d.create_warehouse){
    if(!GOVERNORATES.includes(d.governorate))fail('invalid_field',400,'governorate');
    // D1 batch is atomic: create both records or neither.
-   await db.batch([db.prepare('INSERT INTO warehouses(name,address,governorate) VALUES(?,?,?)').bind(name,'',d.governorate),db.prepare('INSERT INTO technicians(name,phone,warehouse_id,request_id) VALUES(?,?,(SELECT id FROM warehouses WHERE name=?),?)').bind(name,phone,name,id)]);
+   await db.batch([db.prepare('INSERT INTO warehouses(name,address,governorate) VALUES(?,?,?)').bind(name,'',d.governorate),db.prepare('INSERT INTO technicians(name,phone,warehouse_id,request_id) VALUES(?,?,(SELECT id FROM warehouses WHERE name=?),?)').bind(name,phone,name,id),db.prepare('UPDATE technicians SET stock_warehouse_id=warehouse_id WHERE request_id=?').bind(id)]);
   }else await db.prepare('INSERT INTO technicians(name,phone,warehouse_id,request_id) VALUES(?,?,?,?)').bind(name,phone,warehouse,id).run();
   return json({ok:true},201);
  }
@@ -135,6 +138,20 @@ async function api(req,env){
   statements.push(db.prepare(`DELETE FROM warehouse_technicians WHERE ${warehouse?'warehouse_id':'technician_id'}=?`).bind(id));
   statements.push(...ids.map(x=>db.prepare('INSERT INTO warehouse_technicians(warehouse_id,technician_id) VALUES(?,?)').bind(warehouse?id:x,warehouse?x:id)));
   await db.batch(statements);return json({ok:true});
+ }
+ if(/^\/api\/technicians\/\d+\/stock-mode$/.test(path)&&method==='POST'){
+  const id=Number(path.split('/')[3]),d=await body(req);
+  const tech=await db.prepare('SELECT * FROM technicians WHERE id=?').bind(id).first();if(!tech)fail('not_found',404);
+  const shared=d.warehouse_id==null?null:integer(d.warehouse_id,'warehouse');
+  if(shared&&!await db.prepare('SELECT id FROM warehouses WHERE id=? AND custody_owner_id IS NULL').bind(shared).first())fail('invalid_request');
+  // Never hide a nonempty personal custody balance when switching to shared stock.
+  if(shared&&await db.prepare('SELECT product_id FROM stock WHERE warehouse_id=? AND quantity>0 LIMIT 1').bind(tech.custody_warehouse_id).first())fail('custody_not_empty',409);
+  const updated=await db.prepare('UPDATE technicians SET stock_warehouse_id=? WHERE id=? AND (? IS NULL OR NOT EXISTS(SELECT 1 FROM stock WHERE warehouse_id=technicians.custody_warehouse_id AND quantity>0))').bind(shared,id,shared).run();if(!updated.meta.changes)fail('custody_not_empty',409);return json({ok:true});
+ }
+ if(path==='/api/stock/transfer'&&method==='POST'){
+  const d=await body(req),id=requestId(d.request_id),product=integer(d.product_id,'device'),from=integer(d.from_warehouse_id,'warehouse'),to=integer(d.to_warehouse_id,'warehouse'),quantity=integer(d.quantity,'quantity');
+  if(from===to)fail('invalid_request');
+  await db.prepare('INSERT INTO stock_transfers(request_id,product_id,from_warehouse_id,to_warehouse_id,quantity) VALUES(?,?,?,?,?) ON CONFLICT(request_id) DO NOTHING').bind(id,product,from,to,quantity).run();return json({ok:true});
  }
  if(path==='/api/stock/history'&&method==='GET'){
   const warehouse=integer(Number(url.searchParams.get('warehouse_id')),'warehouse'),page=integer(Number(url.searchParams.get('page')||1),'quantity');
@@ -203,16 +220,24 @@ async function api(req,env){
    else{where+=' AND (s.technician_id=? OR '+linked+')';args.push(technician,technician);}
   }
   const base=' FROM sales s JOIN products p ON p.id=s.product_id JOIN warehouses w ON w.id=s.warehouse_id LEFT JOIN technicians t ON t.id=s.technician_id';
-  const queries=[db.prepare('SELECT s.*,'+simFee('s.sim_code')+' sim_fee_cents,p.name product,w.name warehouse,w.governorate,t.name technician'+base+where+' ORDER BY s.sold_on DESC,s.id DESC LIMIT 25 OFFSET ?').bind(...args,(page-1)*25),db.prepare('SELECT COUNT(*) total'+base+where).bind(...args)];
+  const queries=[db.prepare('SELECT s.*,'+simFee('s.sim_code')+" sim_fee_cents,p.name product,w.name warehouse,w.governorate,t.name technician,(SELECT u.name FROM activity a JOIN users u ON u.id=a.actor_id WHERE a.path='/api/sales' AND json_extract(a.details,'$.request_id')=s.request_id ORDER BY a.id LIMIT 1) created_by_name"+base+where+' ORDER BY s.sold_on DESC,s.id DESC LIMIT 25 OFFSET ?').bind(...args,(page-1)*25),db.prepare('SELECT COUNT(*) total'+base+where).bind(...args)];
   if(technician!==null)queries.push(db.prepare(`SELECT COUNT(*) count,COALESCE(SUM(s.quantity),0) units,COALESCE(SUM(s.quantity*s.price_cents),0) revenue,COALESCE(SUM(CASE WHEN s.technician_id=? THEN s.installation_fee_cents ELSE 0 END),0) fees`+base+where+' AND s.cancelled_at IS NULL').bind(technician,...args));
   const r=await db.batch(queries);
   return json({items:r[0].results,total:r[1].results[0].total,page,...(technician!==null?{summary:r[2].results[0]}:{})});
  }
  fail('not_found',404);
 }
-export default{async fetch(req,env){
+export default{async scheduled(controller,env,ctx){ctx.waitUntil(drainOdoo(env));},async fetch(req,env,ctx){
  let response;
- try{response=new URL(req.url).pathname.startsWith('/api/')?await api(req,env):await env.ASSETS.fetch(req);}
+ try{
+ const path=new URL(req.url).pathname;
+ if(!path.startsWith('/api/'))response=await env.ASSETS.fetch(req);
+ else{const auth=await authenticate(req,env);if(auth.response)response=auth.response;else{
+  let details={};if(req.method==='POST'){const text=await req.clone().text();if(text.length>300000)fail('request_large',413);try{const data=JSON.parse(text);if(data&&typeof data==='object'&&!Array.isArray(data)){details=Object.fromEntries(Object.entries(data).filter(([key])=>!['password','password_hash','image'].includes(key)));if(data.password)details.password_changed=true;}}catch{fail('invalid_request');}}
+  response=await odooApi(req,env,auth.user,ctx)||await api(req,{...env,DB:auditedDB(env.DB,auth.user,path,details)},auth.user);
+  if(ctx&&req.method==='POST'&&response.ok&&!path.startsWith('/api/odoo/'))ctx.waitUntil(drainOdoo(env));
+ }}
+ }
  catch(e){let code=e.message,status=e.status||500;
   if(code.includes('INSUFFICIENT_STOCK')){code='insufficient_stock';status=409;}
   else if(code.includes('sales.sim_code')){code='sim_duplicate';status=409;}

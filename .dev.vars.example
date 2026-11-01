@@ -1,1 +1,8 @@
-# No application secrets are required in the simplified version.
+# Authentication uses database-backed accounts and sessions.
+# Do not put account passwords in this file or in Git.
+# Local synchronization is disabled by default. For an isolated test environment:
+# ODOO_ENABLED=false
+# ODOO_URL=https://your-instance.odoo.com
+# ODOO_COMPANY_ID=3
+# ODOO_SOURCE=Local test
+# Put ODOO_API_KEY only in ignored .dev.vars; production uses a Worker secret.

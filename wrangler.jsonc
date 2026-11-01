@@ -3,6 +3,30 @@
   "name": "madar-inventory",
   "main": "src/worker.js",
   "compatibility_date": "2026-09-01",
-  "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": ["/api/*"] },
-  "d1_databases": [{ "binding": "DB", "database_name": "madar-db", "database_id": "7f995117-fc52-4587-8f86-06f2115dc254", "migrations_dir": "migrations" }]
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": [
+      "/api/*"
+    ]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "madar-db",
+      "database_id": "7f995117-fc52-4587-8f86-06f2115dc254",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "triggers": {
+    "crons": [
+      "* * * * *"
+    ]
+  },
+  "vars": {
+    "ODOO_ENABLED": "true",
+    "ODOO_URL": "https://birq.odoo.com",
+    "ODOO_COMPANY_ID": "3",
+    "ODOO_SOURCE": "مدار — الموقع"
+  }
 }
